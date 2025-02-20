@@ -1,0 +1,45 @@
+[package]
+name = "reclog"
+version = "0.1.0"
+edition = "2024"
+description = "Command-line tool to capture command output to a file."
+repository = "https://github.com/gavv/reclog"
+license = "MIT"
+keywords = ["pty", "tty", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
+authors = ["Victor Gaydov <victor@enise.org>"]
+
+[[bin]]
+name = "reclog"
+path = "src/main.rs"
+
+[lints.rust]
+dead_code = "allow"
+
+[lints.clippy]
+comparison_to_empty = "allow"
+nonminimal_bool = "allow"
+redundant_closure = "allow"
+redundant_pattern_matching = "allow"
+unnecessary_unwrap = "allow"
+
+[dependencies]
+exec = "0.3.1"
+libc = "0.2.171"
+lockfree-object-pool = "0.1.6"
+ringbuffer = "0.15.0"
+sysconf = "0.3.4"
+vte = "0.15.0"
+
+[dependencies.clap]
+version = "4.5.30"
+default-features = false
+features = ["std", "help", "usage", "error-context", "derive", "wrap_help"]
+
+[dependencies.chrono]
+version = "0.4.41"
+features = ["std", "alloc", "now", "clock", "iana-time-zone", "android-tzdata"]
+
+[dependencies.rustix]
+version = "1.0.3"
+features = ["stdio", "process", "pipe", "event", "pty", "termios", "system"]

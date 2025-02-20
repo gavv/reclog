@@ -1,0 +1,39 @@
+name: "build"
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+
+  repository_dispatch:
+  workflow_dispatch:
+
+  schedule:
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt,clippy
+
+      - name: Build
+        run: cargo build
+
+      - name: Lint
+        run: cargo clippy
