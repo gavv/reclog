@@ -24,7 +24,7 @@ unnecessary_unwrap = "allow"
 
 [dependencies]
 exec = "0.3.1"
-libc = "0.2.171"
+libc = "0.2.172"
 lockfree-object-pool = "0.1.6"
 ringbuffer = "0.15.0"
 sysconf = "0.3.4"
