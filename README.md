@@ -1,41 +1,79 @@
-# reclog [![Build](https://github.com/gavv/reclog/workflows/build/badge.svg)](https://github.com/gavv/reclog/actions)
+# reclog [![build](https://github.com/gavv/reclog/workflows/build/badge.svg)](https://github.com/gavv/reclog/actions) [![crates.io](https://img.shields.io/crates/v/reclog)](https://crates.io/crates/reclog)
+
+<!-- toc -->
+
+- [Synopsis](#synopsis)
+- [Features](#features)
+- [Limitations](#limitations)
+- [Platforms](#platforms)
+- [Prerequisites](#prerequisites)
+- [Install from git](#install-from-git)
+- [Install from crate](#install-from-crate)
+- [Documentation](#documentation)
+- [Usage examples](#usage-examples)
+- [History](#history)
+- [Authors](#authors)
+- [License](#license)
+
+<!-- tocstop -->
+
+Synopsis
+--------
 
 `reclog` is a command-line tool to capture command output to a file.
 
-It runs the specified command in a pseudo-terminal (pty), connecting its own stdin and stdout with pty's input and output, and in addition duplicates pty's output to a file.
+Instead of:
+
+```
+some-cmd args...
+```
+
+You can run:
+
+```
+reclog some-cmd args...
+```
+
+It works almost exactly the same - the command thinks it runs in a terminal and doesn't disable features like flush on newline and colored output (most programs do so when writing to a pipe or a file). However, there are two differences:
+
+- you get a log file with everything that the command printed, with colors stripped out, plus optional meta info
+
+- now the command is not slowed down by the terminal even if it produces output faster than it can be displayed 
+
+To achieve this, `reclog` runs the command in a pseudo-terminal (pty), connecting its own stdin and stdout with the pty's input and output via a ring buffer. It also handles things like graceful termination and provides some handy features.
 
 Features
 --------
 
-This tool is similar to [unbuffer(1)](https://linux.die.net/man/1/unbuffer), [tee(1)](https://linux.die.net/man/1/tee), and [ts(1)](https://linux.die.net/man/1/ts), but is handier to use and provides a few features that are specifically useful when recording live logs:
+`reclog` resembles some features of [script(1)](https://linux.die.net/man/1/script), [unbuffer(1)](https://linux.die.net/man/1/unbuffer), [tee(1)](https://linux.die.net/man/1/tee), and [ts(1)](https://linux.die.net/man/1/ts), and adds its own:
 
-* **runs command in a pty (unlike `tee`, and like `unbuffer`)**
+* **runs command in a pty (like `script` and `unbuffer`, and unlike `tee`)**
 
     It makes recording transparent to the invoked command. E.g. if the command supports colors, they will work out of the box.
 
 * **ensures that a slow stdout doesn't block the command**
 
-    If the command produces output faster than stdout (e.g. terminal or pipe) can handle it, `reclog` will drop some output. Terminals are often slow, and this feature allows not to bother that live logs can affect testing.
+    If the command produces output faster than stdout can handle (when it's a terminal or pipe), `reclog` drops some messages to keep up. Terminals are often slow, and this feature ensures that displaying logs doesn't affect performance.
 
-    At the same time, the recorded file always gets the full output.
+    At the same time, the recorded file always stores the full output.
 
 * **handles graceful termination and pause/resume**
 
-    Hit `^C` for graceful termination (ask child to exit and wait for pending logs), `^\` for emergency termination (quickly kill child and exit), `^Z` for graceful pause (you can then type `fg` to resume).
+    Hit `^C` for graceful termination (ask child to exit and wait for pending logs), `^\` for emergency termination (quickly kill child and exit), `^Z` for pause (you can then type `fg` to resume).
 
     If the child process is stuck during graceful termination or pause, you can hit `^C` or `^Z` second time to terminate or pause forcibly.
 
-* **can strip ANSI escape codes from the output file**
+* **strips ANSI escape codes from the output file**
 
-    E.g. if the command supports colors, colors will be present in the console, but not in the recorded file.
+    E.g. if the command supports colors, colors will be present in the console, but not stored in the recorded file.
 
 * **can prepend timestamps to the output lines (like `ts`)**
 
-    This is useful when the command itself does not include timestamp in its logs. Both absolute and relative timestamps are supported.
+    This is useful when the command itself does not include timestamps in its logs. Both absolute and relative timestamps are supported.
 
 * **can add a header with meta-information**
 
-    This is useful when you collect logs from different machines or invocations, making recorded files self-describing. Header contains info like hostname, OS, current time, and the command being run.
+    This is useful when you collect logs from different machines or invocations, making recorded files self-describing. Header contains fields like hostname, OS, current time, and the command being run.
 
 Limitations
 -----------
@@ -46,7 +84,7 @@ Limitations
 
 * The invoked command should keeps its child processes (if any) in the same process group and with the same controlling TTY
 
-    If the command spawns background processes with double-fork or daemon(3), those processes may not be automatically terminated when reclog exits.
+    If the command spawns background processes with double-fork or daemon(3), those processes may not be automatically terminated when `reclog` exits.
 
 Platforms
 ---------
@@ -126,8 +164,8 @@ reclog --man > ~/.local/share/man/man1/reclog.1
 
 (Ensure that `~/.local/share/man` is added to MANPATH).
 
-Manual page
------------
+Documentation
+-------------
 
 Manual page is available after installation via `man reclog` and online here: [MANUAL.rst](MANUAL.rst).
 
@@ -136,6 +174,46 @@ You can also read it by running:
 ```
 reclog --man | man -l -
 ```
+
+There is also builtin help:
+
+<!-- help -->
+
+```
+$ reclog --help
+Command-line tool to capture command output to a file.
+
+Usage: reclog [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Command to run
+
+Options:
+  -H, --header               Before start, print header line (hostname, os, time, command)
+  -t, --ts                   Prepend each line of the command output with current time
+      --ts-fmt <FMT>         If --ts is used, defines strftime() format string [default:
+                             "%T%.3f "]
+      --ts-src <SRC>         If --ts is used, defines what timestamps to use: wallclock,
+                             elapsed time since program start, or delta between subsequent
+                             timestamps [default: wall] [possible values: wall, elapsed,
+                             delta]
+  -o, --output <PATH>        Output file path (if omitted, select automatically)
+  -f, --force                Overwrite --output file if it exists
+  -a, --append               Append to --output file if it exists
+  -N, --null                 Don't write --output file at all
+  -R, --raw                  Don't strip ANSI escape codes when writing to --output file
+  -s, --silent               Don't print anything to stdout
+  -q, --quit <MILLISECONDS>  After EOF from command, wait the specified timeout and then
+                             quit (milliseconds) [default: 10]
+  -b, --buffer <LINES>       When stdout is slower than command output, buffer at max the
+                             specified number of lines; doesn't affect --output file
+                             [default: 10000]
+      --man                  Print man page
+  -h, --help                 Print help
+  -V, --version              Print version
+```
+
+<!-- helpstop -->
 
 Usage examples
 --------------

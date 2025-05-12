@@ -24,14 +24,8 @@ dev:
 	cargo build
 	cargo clippy
 
-docs:
-	version=`sed -n 's/^version\s*=\s*"\(.*\)"/\1/p' Cargo.toml | head -1`; \
-	date=`date +"%B %Y"`; \
-		sed -e "s/^:Footer:.*/:Footer: reclog $$version/" \
-			-e "s/^:Date:.*/:Date: $$date/" \
-			-i MANUAL.rst
-	pandoc --standalone --to man MANUAL.rst > reclog.1
-	md-authors --format modern --append AUTHORS.md
+docs: dev
+	./script/update_docs.sh
 
 clean:
 	cargo clean
