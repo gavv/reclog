@@ -1,10 +1,10 @@
 =========
 reclog(1)
 =========
-:Date: May 2025
-:Version: 0.1.0
 :Manual section: 1
 :Manual group: User Commands
+:Date: May 2025
+:Footer: reclog 0.1.0
 
 NAME
 ====

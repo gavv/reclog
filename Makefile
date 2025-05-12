@@ -27,7 +27,7 @@ dev:
 docs:
 	version=`sed -n 's/^version\s*=\s*"\(.*\)"/\1/p' Cargo.toml | head -1`; \
 	date=`date +"%B %Y"`; \
-		sed -e "s/^:Version:.*/:Version: $$version/" \
+		sed -e "s/^:Footer:.*/:Footer: reclog $$version/" \
 			-e "s/^:Date:.*/:Date: $$date/" \
 			-i MANUAL.rst
 	pandoc --standalone --to man MANUAL.rst > reclog.1
