@@ -1,6 +1,6 @@
 [package]
 name = "reclog"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Command-line tool to capture command output to a file."
 repository = "https://github.com/gavv/reclog"
