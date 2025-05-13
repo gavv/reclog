@@ -34,13 +34,13 @@ You can run:
 reclog some-cmd args...
 ```
 
-It works almost exactly the same - the command thinks it runs in a terminal and doesn't disable features like flush on newline and colored output (most programs do so when writing to a pipe or a file). However, there are two differences:
+It works almost exactly the same - the command thinks it runs in a terminal and doesn't disable features like flush on newline and colored output (most programs disable that when writing to a pipe or a file). However, there are two differences:
 
 - you get a log file with everything that the command printed, with colors stripped out, plus optional meta info
 
-- now the command is not slowed down by the terminal even if it produces output faster than it can be displayed 
+- now the command is not slowed down by the terminal even if it produces output faster than it can be displayed
 
-To achieve this, `reclog` runs the command in a pseudo-terminal (pty), connecting its own stdin and stdout with the pty's input and output via a ring buffer. It also handles things like graceful termination and provides some handy features.
+To achieve this, `reclog` runs the command in a pseudo-terminal (pty), connecting its own stdin and stdout with the pty's input and output via a ring buffer. It also handles things like graceful termination and provides some handy related features.
 
 Features
 --------
@@ -50,6 +50,10 @@ Features
 * **runs command in a pty (like `script` and `unbuffer`, and unlike `tee`)**
 
     It makes recording transparent to the invoked command. E.g. if the command supports colors, they will work out of the box.
+
+* **duplicates command output to a file (like `tee`)**
+
+    Everything that the command prints to its stdout and stderr goes both to `reclog` stdout (typically terminal) and to a file.
 
 * **ensures that a slow stdout doesn't block the command**
 
@@ -82,14 +86,14 @@ Limitations
 
     If the command just reads lines from stdin and writes lines to stdout, probably with ANSI escape codes, that's perfectly fine. If the command performs some non-trivial configuration of the TTY, things may happen.
 
-* The invoked command should keeps its child processes (if any) in the same process group and with the same controlling TTY
+* The invoked command should keep its child processes (if any) in the same process group and don't change the controlling tty.
 
-    If the command spawns background processes with double-fork or daemon(3), those processes may not be automatically terminated when `reclog` exits.
+    If the command spawns background processes that use double-fork or daemon(3), or detach from tty, those processes may remaining dangling after `reclog` exits.
 
 Platforms
 ---------
 
-Any UNIX-like OS should be fine, including Linux, BSD, and macOS.
+The program is written using POSIX interfaces, and any UNIX-like OS should be fine, including Linux, BSD, and macOS.
 
 However, only Linux was tested so far.
 
@@ -218,7 +222,7 @@ Options:
 Usage examples
 --------------
 
-Basic usage. The output will be saved to `tshark.log`, with colors stripped out.
+Basic usage; the output is saved to `tshark.log`, with colors stripped out:
 
 ```
 $ reclog tshark --color -i lo -f tcp
@@ -229,14 +233,14 @@ Capturing on 'Loopback: lo'
     2 0.000405985          ::1 → ::1          TCP 350 6600 → 55450 [PSH, ACK] Seq=1 Ack=8 Win=512 Len=264 TSval=3494902417 TSecr=3494902416
     3 0.000412305          ::1 → ::1          TCP 86 55450 → 6600 [ACK] Seq=8 Ack=265 Win=9205 Len=0 TSval=3494902417 TSecr=3494902417
 ...
-^Ctshark: 
+^Ctshark:
 10 packets captured
 
 $ cat tshark.log
 <same content as printed above, but without colors>
 ```
 
-On next invocation, a new output file will be selected (`tshark-1.log`):
+On next invocation, a new output file is selected (`tshark-1.log`):
 
 ```
 $ reclog tshark --color -i lo -f tcp
@@ -250,27 +254,21 @@ Explicitly specify output file name (but refuse to overwrite it):
 
 ```
 $ reclog -o test.log tshark --color -i lo -f tcp
-...
-
-$ cat test.log
-...
 ```
 
 Overwrite exiting file:
 
 ```
 $ reclog -f -o test.log tshark --color -i lo -f tcp
-...
 ```
 
 Append to exiting file:
 
 ```
 $ reclog -a -o test.log tshark --color -i lo -f tcp
-...
 ```
 
-Enable header and timestamps. The very first line (`# HOST=...`) and timestamps in the beginning of every other line (like `21:39:28.437`) are injected to the output by reclog.
+Enable header and timestamps; the very first line (`# HOST=...`), and the timestamps in the beginning of every other line (like `21:39:28.437`) are injected to the output by reclog:
 
 ```
 $ reclog -Ht tshark --color -i lo -f tcp
@@ -298,9 +296,6 @@ MAN
 SBIN
 SHARE
 SRC
-
-$ cat tr.log
-...
 ```
 
 History
