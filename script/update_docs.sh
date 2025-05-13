@@ -1,7 +1,10 @@
 #! /bin/bash
+# -*- mode: sh; indent-tabs-mode: nil; sh-basic-offset: 2; -*-
 set -euo pipefail
 
-echo "updating README.md ..."
+cd "`dirname "$0"`/.."
+
+echo "Updating README.md"
 
 markdown-toc --maxdepth 2 --bullets=- -i README.md
 
@@ -24,19 +27,10 @@ EOF
         -e '}; /<!-- help -->/,/<!-- helpstop -->/d' \
         -i README.md
 
-echo "updating MANUAL.rst ..."
-
-version=`sed -n 's/^version\s*=\s*"\(.*\)"/\1/p' Cargo.toml | head -1`
-date=`date +"%B %Y"`
-
-sed -e "s/^:Footer:.*/:Footer: reclog ${version}/" \
-    -e "s/^:Date:.*/:Date: ${date}/" \
-    -i MANUAL.rst
-
-pandoc --standalone --to man MANUAL.rst > reclog.1
-
-echo "updating AUTHORS.md ..."
+echo "Updating AUTHORS.md"
 
 md-authors --format modern --append AUTHORS.md
 
-echo "all done."
+echo "Updating reclog.1"
+
+pandoc --standalone --to man MANUAL.rst > reclog.1
