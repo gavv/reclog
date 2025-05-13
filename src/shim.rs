@@ -231,6 +231,37 @@ pub unsafe fn close_raw(fd: RawFd) {
     }
 }
 
+/// Safe shim for fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK).
+/// Handles EINTR.
+pub fn fcntl_nonblock<Fd: AsFd>(fd: Fd, non_block: bool) -> Result<(), Errno> {
+    loop {
+        let mut flags = unsafe { libc::fcntl(fd.as_fd().as_raw_fd(), libc::F_GETFL) };
+        if flags < 0 {
+            if last_errno() == Errno::INTR {
+                continue;
+            }
+            return Err(last_errno());
+        }
+
+        if non_block {
+            flags |= libc::O_NONBLOCK;
+        } else {
+            flags &= !libc::O_NONBLOCK;
+        }
+
+        let ret =
+            unsafe { libc::fcntl(fd.as_fd().as_raw_fd(), libc::F_SETFL, flags as libc::c_uint) };
+        if ret < 0 {
+            if last_errno() == Errno::INTR {
+                continue;
+            }
+            return Err(last_errno());
+        }
+
+        return Ok(());
+    }
+}
+
 pub enum SigAction {
     Default,
     Ignore,

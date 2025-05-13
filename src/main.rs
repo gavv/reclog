@@ -585,7 +585,8 @@ fn pty_2_queue_and_file(
             }
         }
 
-        // Write buffer (probably stripped) to output file, synchronously.
+        // Write buffer to output file, synchronously.
+        // If stripping is enabled, this writer will also remove ANSI escape codes.
         if let Err(err) = out_writer.write_all(buf.as_bytes()) {
             terminate!(EXIT_FAILURE; "can't write output file: {}", err);
         }
@@ -598,8 +599,8 @@ fn pty_2_queue_and_file(
         // If queue is full, oldest elements are removed. That's fine - our stdout is
         // supposed to be a TTY, and if it's too slow to display all lines in time,
         // there is no need trying to write all of them - user won't see them
-        // anyway at that speed and VTE scrollback is usually limited and will
-        // anyway remove them.
+        // anyway at that speed and VTE scrollback is usually limited and TTY will
+        // anyway drop them.
         buf_queue.write(buf);
     }
 

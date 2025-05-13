@@ -1,6 +1,6 @@
 use crate::error::SysError;
 use crate::shim::{self, SelectFd};
-use rustix::io::retry_on_intr;
+use rustix::io::{Errno, retry_on_intr};
 use rustix::pipe;
 use std::io::{Error, Read};
 use std::os::fd::{AsFd, OwnedFd};
@@ -32,6 +32,10 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
             Err(err) => return Err(SysError("pipe()", err)),
         };
 
+        shim::fcntl_nonblock(&fd, true).map_err(|err| SysError("fcntl(fd)", err))?;
+        shim::fcntl_nonblock(&pipe_rd, true).map_err(|err| SysError("fcntl(pipe)", err))?;
+        shim::fcntl_nonblock(&pipe_wr, true).map_err(|err| SysError("fcntl(pipe)", err))?;
+
         Ok(InterruptibleReader {
             mode: Mutex::new(ReaderMode::NoTimeout),
             fd,
@@ -54,7 +58,9 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
 
         // wake up and abort blocked read
         if let Err(err) = shim::write(&self.pipe_wr, &[0u8]) {
-            return Err(SysError("write(pipe)", err));
+            if err != Errno::AGAIN {
+                return Err(SysError("write(pipe)", err));
+            }
         }
 
         Ok(())
@@ -74,7 +80,9 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
 
         // wake up and restart blocked read
         if let Err(err) = shim::write(&self.pipe_wr, &[0u8]) {
-            return Err(SysError("write(pipe)", err));
+            if err != Errno::AGAIN {
+                return Err(SysError("write(pipe)", err));
+            }
         }
 
         Ok(())
