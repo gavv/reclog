@@ -9,7 +9,7 @@ use std::cmp::max;
 use std::ffi::CStr;
 use std::io::Error;
 use std::mem::{self, MaybeUninit};
-use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::ptr::null_mut;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -91,7 +91,7 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
 }
 
 /// Safe (in context of this program) shim for libc::ptsname().
-pub fn ptsname(fd: BorrowedFd) -> Result<String, Errno> {
+pub fn ptsname<Fd: AsFd>(fd: Fd) -> Result<String, Errno> {
     // SAFETY: ptsname() returns a pointer to static storage and hence is not
     // thread-safe. However, `reclog` is a program, not a library, and we know
     // in advance that this is the only place that calls it. The guard below
@@ -105,7 +105,7 @@ pub fn ptsname(fd: BorrowedFd) -> Result<String, Errno> {
     let _guard = MUTEX.lock();
 
     let s_ref = unsafe {
-        let s_ptr = libc::ptsname(fd.as_raw_fd());
+        let s_ptr = libc::ptsname(fd.as_fd().as_raw_fd());
         if s_ptr.is_null() {
             return Err(last_errno());
         }
@@ -144,11 +144,11 @@ pub unsafe fn fast_exit(code: i32) {
 /// Safe shim for libc::read().
 /// Handles EINTR.
 /// Unlike rustix version, doesn't consume the buffer.
-pub fn read(fd: BorrowedFd, buf: &mut [u8]) -> Result<usize, Errno> {
+pub fn read<Fd: AsFd>(fd: Fd, buf: &mut [u8]) -> Result<usize, Errno> {
     loop {
         let ret = unsafe {
             libc::read(
-                fd.as_raw_fd(),
+                fd.as_fd().as_raw_fd(),
                 buf.as_mut_ptr() as *mut libc::c_void,
                 buf.len(),
             )
@@ -166,12 +166,12 @@ pub fn read(fd: BorrowedFd, buf: &mut [u8]) -> Result<usize, Errno> {
 /// Safe shim for libc::write().
 /// Handles EINTR.
 /// Handles partial writes.
-pub fn write(fd: BorrowedFd, buf: &[u8]) -> Result<usize, Errno> {
+pub fn write<Fd: AsFd>(fd: Fd, buf: &[u8]) -> Result<usize, Errno> {
     let mut pos = 0;
     while pos < buf.len() {
         let ret = unsafe {
             libc::write(
-                fd.as_raw_fd(),
+                fd.as_fd().as_raw_fd(),
                 buf[pos..].as_ptr() as *mut libc::c_void,
                 buf.len() - pos,
             )

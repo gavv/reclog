@@ -53,7 +53,7 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
         }
 
         // wake up and abort blocked read
-        if let Err(err) = shim::write(self.pipe_wr.as_fd(), &[0u8]) {
+        if let Err(err) = shim::write(&self.pipe_wr, &[0u8]) {
             return Err(SysError("write(pipe)", err));
         }
 
@@ -73,7 +73,7 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
         }
 
         // wake up and restart blocked read
-        if let Err(err) = shim::write(self.pipe_wr.as_fd(), &[0u8]) {
+        if let Err(err) = shim::write(&self.pipe_wr, &[0u8]) {
             return Err(SysError("write(pipe)", err));
         }
 
@@ -119,7 +119,7 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
             if pipe_fd.ready {
                 // wake up from set_timeout() or close()
                 // drain bytes from pipe
-                _ = shim::read(self.pipe_rd.as_fd(), &mut [0u8; 128]);
+                _ = shim::read(&self.pipe_rd, &mut [0u8; 128]);
             }
             if data_fd.ready {
                 // data from file
@@ -133,7 +133,7 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
         }
 
         // if we're here, there is new data in file
-        match shim::read(self.fd.as_fd(), buf) {
+        match shim::read(&self.fd, buf) {
             Ok(n) => Ok(n),
             Err(err) => Err(Error::new(err.kind(), err)),
         }

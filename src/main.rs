@@ -24,7 +24,7 @@ use rustix::stdio;
 use rustix::termios::Termios;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Stdin, Write};
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -267,11 +267,11 @@ fn before_start(mode: StartMode) {
         }
     }
 
-    if term::is_tty(&stdio::stdin()) {
+    if term::is_tty(stdio::stdin()) {
         if mode == StartMode::Startup {
             // Save original tty state.
             debug!("saving tty state of stdin");
-            let state = match term::save_tty_state(&stdio::stdin()) {
+            let state = match term::save_tty_state(stdio::stdin()) {
                 Ok(state) => state,
                 Err(err) => {
                     terminate!(EXIT_FAILURE; "can't read tty state: {}", err);
@@ -282,7 +282,7 @@ fn before_start(mode: StartMode) {
 
         // Enable canonical mode for stdin.
         debug!("enabling canonical mode for stdin");
-        if let Err(err) = term::set_tty_mode(&stdio::stdin(), TtyMode::Canon) {
+        if let Err(err) = term::set_tty_mode(stdio::stdin(), TtyMode::Canon) {
             terminate!(EXIT_FAILURE; "can't switch tty to canonical mode: {}", err);
         }
     }
@@ -296,7 +296,7 @@ fn before_exit() {
     // Restore original tty state if it was saved.
     debug!("restoring tty state of stdin");
     if let Some(state) = TTY_STATE.get() {
-        _ = term::restore_tty_state(&stdio::stdin(), state);
+        _ = term::restore_tty_state(stdio::stdin(), state);
     }
 }
 
@@ -501,7 +501,7 @@ fn stdin_2_pty(
             Ok(fd) => fd,
             Err(err) => terminate!(EXIT_FAILURE; "can't duplicate slave fd: {}", err),
         };
-        match term::get_tty_codes(&slave_fd.as_fd()) {
+        match term::get_tty_codes(&slave_fd) {
             Ok(codes) => codes,
             Err(err) => terminate!(EXIT_FAILURE; "can't read pty attributes: {}", err),
         }

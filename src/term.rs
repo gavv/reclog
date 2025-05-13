@@ -2,12 +2,12 @@ use crate::error::SysError;
 use rustix::io::retry_on_intr;
 use rustix::termios::{self, LocalModes, OptionalActions, SpecialCodeIndex, Termios};
 use std::io::{Error, LineWriter, Write};
-use std::os::fd::BorrowedFd;
+use std::os::fd::AsFd;
 use std::slice;
 
 /// Check if descriptor is a tty.
-pub fn is_tty(fd: &BorrowedFd) -> bool {
-    termios::isatty(fd)
+pub fn is_tty<Fd: AsFd>(fd: Fd) -> bool {
+    termios::isatty(&fd)
 }
 
 /// Input mode of a tty.
@@ -17,8 +17,8 @@ pub enum TtyMode {
 }
 
 /// Enable canonical mode w/o echo.
-pub fn set_tty_mode(tty_fd: &BorrowedFd, mode: TtyMode) -> Result<(), SysError> {
-    let mut term = match retry_on_intr(|| termios::tcgetattr(tty_fd)) {
+pub fn set_tty_mode<Fd: AsFd>(tty_fd: Fd, mode: TtyMode) -> Result<(), SysError> {
+    let mut term = match retry_on_intr(|| termios::tcgetattr(&tty_fd)) {
         Ok(term) => term,
         Err(err) => return Err(SysError("tcgetattr()", err)),
     };
@@ -31,7 +31,7 @@ pub fn set_tty_mode(tty_fd: &BorrowedFd, mode: TtyMode) -> Result<(), SysError> 
         }
     };
 
-    if let Err(err) = retry_on_intr(|| termios::tcsetattr(tty_fd, OptionalActions::Now, &term)) {
+    if let Err(err) = retry_on_intr(|| termios::tcsetattr(&tty_fd, OptionalActions::Now, &term)) {
         return Err(SysError("tcsetattr()", err));
     }
 
@@ -45,8 +45,8 @@ pub struct TtyCodes {
 }
 
 /// Enable canonical mode w/o echo.
-pub fn get_tty_codes(tty_fd: &BorrowedFd) -> Result<TtyCodes, SysError> {
-    let term = match retry_on_intr(|| termios::tcgetattr(tty_fd)) {
+pub fn get_tty_codes<Fd: AsFd>(tty_fd: Fd) -> Result<TtyCodes, SysError> {
+    let term = match retry_on_intr(|| termios::tcgetattr(&tty_fd)) {
         Ok(term) => term,
         Err(err) => return Err(SysError("tcgetattr()", err)),
     };
@@ -59,13 +59,16 @@ pub fn get_tty_codes(tty_fd: &BorrowedFd) -> Result<TtyCodes, SysError> {
 }
 
 /// Copy win size from src to dst.
-pub fn copy_tty_size(dst_tty_fd: &BorrowedFd, src_tty_fd: &BorrowedFd) -> Result<(), SysError> {
-    let win_size = match retry_on_intr(|| termios::tcgetwinsize(src_tty_fd)) {
+pub fn copy_tty_size<DstFd: AsFd, SrcFd: AsFd>(
+    dst_tty_fd: DstFd,
+    src_tty_fd: SrcFd,
+) -> Result<(), SysError> {
+    let win_size = match retry_on_intr(|| termios::tcgetwinsize(&src_tty_fd)) {
         Ok(win_size) => win_size,
         Err(err) => return Err(SysError("tcgetwinsize()", err)),
     };
 
-    if let Err(err) = retry_on_intr(|| termios::tcsetwinsize(dst_tty_fd, win_size)) {
+    if let Err(err) = retry_on_intr(|| termios::tcsetwinsize(&dst_tty_fd, win_size)) {
         return Err(SysError("tcsetwinsize()", err));
     }
 
@@ -73,16 +76,16 @@ pub fn copy_tty_size(dst_tty_fd: &BorrowedFd, src_tty_fd: &BorrowedFd) -> Result
 }
 
 /// Save tty state into a variable.
-pub fn save_tty_state(tty_fd: &BorrowedFd) -> Result<Termios, SysError> {
-    match retry_on_intr(|| termios::tcgetattr(tty_fd)) {
+pub fn save_tty_state<Fd: AsFd>(tty_fd: Fd) -> Result<Termios, SysError> {
+    match retry_on_intr(|| termios::tcgetattr(&tty_fd)) {
         Ok(term) => Ok(term),
         Err(err) => Err(SysError("tcgetattr()", err)),
     }
 }
 
 /// Restore tty state from a variable.
-pub fn restore_tty_state(tty_fd: &BorrowedFd, term: &Termios) -> Result<(), SysError> {
-    if let Err(err) = retry_on_intr(|| termios::tcsetattr(tty_fd, OptionalActions::Now, term)) {
+pub fn restore_tty_state<Fd: AsFd>(tty_fd: Fd, term: &Termios) -> Result<(), SysError> {
+    if let Err(err) = retry_on_intr(|| termios::tcsetattr(&tty_fd, OptionalActions::Now, term)) {
         return Err(SysError("tcsetattr()", err));
     }
     Ok(())

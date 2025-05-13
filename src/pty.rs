@@ -9,7 +9,7 @@ use rustix::io::{self, Errno, retry_on_intr};
 use rustix::process::{self, Pid, Signal, WaitOptions, WaitStatus};
 use rustix::pty::{self, OpenptFlags};
 use rustix::stdio;
-use std::os::fd::{AsFd, OwnedFd, RawFd};
+use std::os::fd::{OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::Mutex;
 use sysconf::raw::{SysconfVariable, sysconf};
@@ -56,7 +56,7 @@ impl PtyProc {
         }
 
         // open slave pty
-        let pts_name = match shim::ptsname(master_fd.as_fd()) {
+        let pts_name = match shim::ptsname(&master_fd) {
             Ok(s) => s,
             Err(err) => return Err(SysError("ptsname()", err)),
         };
@@ -134,9 +134,9 @@ impl PtyProc {
     pub fn resize_child(&self) -> Result<(), SysError> {
         let _locked_child = self.child.lock().unwrap();
 
-        if term::is_tty(&stdio::stdout()) {
+        if term::is_tty(stdio::stdout()) {
             // Kernel will update slave pty and send SIGWINCH to child process.
-            term::copy_tty_size(&self.master_fd.as_fd(), &stdio::stdout())?;
+            term::copy_tty_size(&self.master_fd, stdio::stdout())?;
         }
 
         Ok(())
@@ -205,10 +205,10 @@ impl PtyProc {
 
     fn prepare_parent(&self) -> Result<(), SysError> {
         // Kernel will update slave pty as well.
-        term::set_tty_mode(&self.master_fd.as_fd(), TtyMode::CanonNoEcho)?;
+        term::set_tty_mode(&self.master_fd, TtyMode::CanonNoEcho)?;
 
-        if term::is_tty(&stdio::stdout()) {
-            term::copy_tty_size(&self.master_fd.as_fd(), &stdio::stdout())?;
+        if term::is_tty(stdio::stdout()) {
+            term::copy_tty_size(&self.master_fd, stdio::stdout())?;
         }
 
         Ok(())
@@ -242,7 +242,7 @@ impl PtyProc {
         // close file descriptors except stdin/stdout/stderr
         let max_fd = match sysconf(SysconfVariable::ScOpenMax) {
             Ok(n) => n,
-            Err(_) => return Err(SysError("sysconf(_SC_OPEN_MAX)", Errno::INVAL)),
+            Err(_) => return Err(SysError("sysconf(_SC_OPEN_MAX)", Errno::NOTSUP)),
         };
         unsafe {
             for fd in 3..=max_fd {
