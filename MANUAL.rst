@@ -104,6 +104,9 @@ OPTIONS
 
     This option has no effect writing to **--output** file, only writing to reclog's stdout. Output file always receives the full output.
 
+**-D, --debug**
+    Enable debug logging to stderr.
+
 **--man**
     Print man page in troff format to stdout and exit.
 
@@ -136,8 +139,9 @@ EXIT STATUS
 CAVEATS
 =======
 
-- Invoked command should be a non-interactive program that uses terminal in canonical mode, otherwise things may happen.
-- Invoked command should keep its child processes (if any) in the same process group and with the same controlling TTY, otherwise they may not be automatically terminated.
+- The output and input should be textual and line-oriented, otherwise errors are possible.
+- The command should be a non-interactive program that uses terminal in canonical mode, otherwise data corruption and freezes are possible.
+- The command should keep its child processes (if any) in the same process group and with the same controlling TTY, otherwise they may remain dangling.
 
 EXAMPLES
 ========

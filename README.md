@@ -82,11 +82,15 @@ Features
 Limitations
 -----------
 
-* The invoked command should be a non-interactive program that uses terminal in canonical mode (i.e. with line-buffered input, control characters, etc.)
+* The command output and input (if used) should be textual and line-oriented.
+
+    `reclog` reads and processes stdout line by line, same applies to stdin. Things like binary data or huge lines may cause errors.
+
+* The command should be a non-interactive program that uses terminal in canonical mode (i.e. with line-buffered input, control sequences, etc.)
 
     If the command just reads lines from stdin and writes lines to stdout, probably with ANSI escape codes, that's perfectly fine. If the command performs some non-trivial configuration of the TTY, things may happen.
 
-* The invoked command should keep its child processes (if any) in the same process group and don't change the controlling tty.
+* The command should keep its child processes (if any) in the same process group and don't change the controlling tty.
 
     If the command spawns background processes that use double-fork or daemon(3), or detach from tty, those processes may remaining dangling after `reclog` exits.
 
@@ -212,7 +216,8 @@ Options:
   -b, --buffer <LINES>       When stdout is slower than command output, buffer at max the
                              specified number of lines; doesn't affect --output file
                              [default: 10000]
-      --man                  Print man page
+  -D, --debug                Enable debug logging to stderr
+      --man                  Print man page (troff)
   -h, --help                 Print help
   -V, --version              Print version
 ```

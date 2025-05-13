@@ -161,6 +161,9 @@ writing to reclog\[aq]s stdout.
 Output file always receives the full output.
 .RE
 .TP
+\f[B]\-D, \-\-debug\f[R]
+Enable debug logging to stderr.
+.TP
 \f[B]\-\-man\f[R]
 Print man page in troff format to stdout and exit.
 .TP
@@ -209,12 +212,15 @@ If the command is killed by signal \f[I]N\f[R], reclog exits with the
 status \f[I]128 + N\f[R].
 .SH CAVEATS
 .IP \[bu] 2
-Invoked command should be a non\-interactive program that uses terminal
-in canonical mode, otherwise things may happen.
+The output and input should be textual and line\-oriented, otherwise
+errors are possible.
 .IP \[bu] 2
-Invoked command should keep its child processes (if any) in the same
-process group and with the same controlling TTY, otherwise they may not
-be automatically terminated.
+The command should be a non\-interactive program that uses terminal in
+canonical mode, otherwise data corruption and freezes are possible.
+.IP \[bu] 2
+The command should keep its child processes (if any) in the same process
+group and with the same controlling TTY, otherwise they may remain
+dangling.
 .SH EXAMPLES
 Specify output file:
 .IP
