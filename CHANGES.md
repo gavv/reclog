@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.1.3][v0.1.3] - 14 May 2025
+
+* Fix hang when blocked on full pty buffer
+* Allow to interrupt final phase of graceful termination
+* Add `--debug` logs
+* Improve documentation
+
+[v0.1.3]: https://github.com/gavv/reclog/releases/tag/v0.1.3
+
 ## [v0.1.2][v0.1.2] - 13 May 2025
 
 * Update documentation
