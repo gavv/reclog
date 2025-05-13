@@ -17,14 +17,15 @@ use crate::reader::InterruptibleReader;
 use crate::signal::SignalEvent;
 use crate::status::*;
 use crate::term::{AnsiStripper, TtyMode};
+use crate::writer::InterruptibleWriter;
 use clap::Parser;
 use clap::error::ErrorKind;
 use exec::Command;
 use rustix::process::Signal;
 use rustix::stdio;
 use rustix::termios::Termios;
-use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Stdin, Write};
+use std::fs::OpenOptions;
+use std::io::{self, BufRead, BufReader, BufWriter, Stdin, Stdout, Write};
 use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::process;
@@ -306,12 +307,7 @@ fn before_exit() {
 /// fetches them one by one using sigwait().
 /// Possible signals are SIGCHILD (child exited), various termination
 /// signals, and stop/resume signals.
-fn process_signals(
-    pty_proc: Arc<PtyProc>,
-    pty_reader: Arc<InterruptibleReader<OwnedFd>>,
-    stdin_reader: Arc<InterruptibleReader<Stdin>>,
-    timeout: Duration,
-) -> Option<Signal> {
+fn process_signals(pty_proc: Arc<PtyProc>, timeout: Duration) -> Option<Signal> {
     debug!("entering process_signals thread");
 
     let mut pending_interrupt = None;
@@ -468,21 +464,6 @@ fn process_signals(
         }
     }
 
-    // Set timeout for PTY. After there is no data from child during timeout, PTY
-    // reading thread will get EOF and exit. Timeout is needed to ensure we've
-    // read all pending data after child exit.
-    debug!("setting pty reader timeout to {:?}", timeout);
-    if let Err(err) = pty_reader.set_timeout(timeout) {
-        terminate!(EXIT_FAILURE; "can't set read timeout: {}", err);
-    }
-
-    // Interrupt STDIN.
-    // Stdin reading thread will get EOF and exit.
-    debug!("closing stdin reader");
-    if let Err(err) = stdin_reader.close() {
-        terminate!(EXIT_FAILURE; "can't close stdin: {}", err);
-    }
-
     debug!("leaving process_signals thread");
 
     pending_interrupt
@@ -492,7 +473,7 @@ fn process_signals(
 /// (i.e. to child's stdin).
 fn stdin_2_pty(
     pty_proc: Arc<PtyProc>,
-    mut pty_writer: File,
+    pty_writer: Arc<InterruptibleWriter<OwnedFd>>,
     stdin_reader: Arc<InterruptibleReader<Stdin>>,
 ) {
     debug!("entering stdin_2_pty thread");
@@ -507,6 +488,8 @@ fn stdin_2_pty(
             Err(err) => terminate!(EXIT_FAILURE; "can't read pty attributes: {}", err),
         }
     };
+
+    let mut pty_line_writer = BufWriter::new(pty_writer.blocking_writer());
 
     let mut buf_reader = BufReader::new(stdin_reader.blocking_reader());
     let mut buf = String::new();
@@ -529,7 +512,10 @@ fn stdin_2_pty(
             buf.push(tty_codes.VEOF);
         }
 
-        if let Err(err) = pty_writer.write_all(buf.as_bytes()) {
+        if let Err(err) = pty_line_writer.write_all(buf.as_bytes()) {
+            terminate!(EXIT_FAILURE; "can't write to pty: {}", err);
+        }
+        if let Err(err) = pty_line_writer.flush() {
             terminate!(EXIT_FAILURE; "can't write to pty: {}", err);
         }
     }
@@ -538,8 +524,10 @@ fn stdin_2_pty(
 }
 
 /// Thread that reads lines from buffer queue and writes them to stdout.
-fn queue_2_stdout(buf_queue: Arc<BufferQueue>) {
+fn queue_2_stdout(buf_queue: Arc<BufferQueue>, stdout_writer: Arc<InterruptibleWriter<Stdout>>) {
     debug!("entering queue_2_stdout thread");
+
+    let mut stdout_line_writer = BufWriter::new(stdout_writer.blocking_writer());
 
     loop {
         let buf = match buf_queue.read() {
@@ -547,11 +535,14 @@ fn queue_2_stdout(buf_queue: Arc<BufferQueue>) {
             None => break, // queue closed, exit loop
         };
 
-        if let Err(err) = io::stdout().write_all(buf.as_bytes()) {
+        if let Err(err) = stdout_line_writer.write_all(buf.as_bytes()) {
+            terminate!(EXIT_FAILURE; "can't write to stdout: {}", err);
+        }
+        if let Err(err) = stdout_line_writer.flush() {
             terminate!(EXIT_FAILURE; "can't write to stdout: {}", err);
         }
 
-        // buf is returned to pool here.
+        // buf is returned to pool here
     }
 
     debug!("leaving queue_2_stdout thread");
@@ -560,7 +551,7 @@ fn queue_2_stdout(buf_queue: Arc<BufferQueue>) {
 /// Thread that reads lines from master pty (i.e. child's stdout) and writes
 /// them to output file and to buffer queue.
 fn pty_2_queue_and_file(
-    pty_reader: Arc<InterruptibleReader<OwnedFd>>,
+    pty_reader: &Arc<InterruptibleReader<OwnedFd>>,
     out_writer: &mut dyn Write,
     buf_queue: &Arc<BufferQueue>,
     buf_pool: &Arc<BufferPool>,
@@ -598,6 +589,9 @@ fn pty_2_queue_and_file(
         if let Err(err) = out_writer.write_all(buf.as_bytes()) {
             terminate!(EXIT_FAILURE; "can't write output file: {}", err);
         }
+        if let Err(err) = out_writer.flush() {
+            terminate!(EXIT_FAILURE; "can't write output file: {}", err);
+        }
 
         // Move buffer to queue.
         // pty_2_stdout_thread will fetch it, write to stdout, and return buffer to pool.
@@ -610,6 +604,40 @@ fn pty_2_queue_and_file(
     }
 
     debug!("leaving pty_2_queue_and_file thread");
+}
+
+/// Tell all threads to unblock and exit.
+fn initiate_shutdown(
+    stdin_reader: Arc<InterruptibleReader<Stdin>>,
+    pty_reader: Arc<InterruptibleReader<OwnedFd>>,
+    pty_writer: Arc<InterruptibleWriter<OwnedFd>>,
+    buf_queue: Arc<BufferQueue>,
+    timeout: Duration,
+) {
+    // Set timeout for reading from child. After there is no data during timeout,
+    // pty_2_queue_and_file() gets EOF and exits. Timeout allows to be sure we've
+    // read all pending data buferred in the pty.
+    debug!("setting pty reader timeout to {:?}", timeout);
+    if let Err(err) = pty_reader.set_timeout(timeout) {
+        terminate!(EXIT_FAILURE; "can't set pty read timeout: {}", err);
+    }
+
+    // Interrupt stdin_2_pty().
+    // It may be blocked on stdin or pty.
+    // This will unblock pty writer and tell stdin reader to return EOF.
+    debug!("closing pty writer");
+    if let Err(err) = pty_writer.close() {
+        terminate!(EXIT_FAILURE; "can't close pty writer: {}", err);
+    }
+    debug!("closing stdin reader");
+    if let Err(err) = stdin_reader.close() {
+        terminate!(EXIT_FAILURE; "can't close stdin: {}", err);
+    }
+
+    // Tell pty_2_stdout() to finish.
+    // It will process all pending buffers, then see that queue is closed and exit.
+    debug!("closing buffer queue");
+    buf_queue.close();
 }
 
 /// Get child process exit code and exit with same code.
@@ -718,20 +746,23 @@ fn main() {
     let pty_writer = {
         let master_fd = match pty_proc.dup_master() {
             Ok(fd) => fd,
-            Err(err) => terminate!(EXIT_FAILURE; "can't duplicate master: {}", err),
+            Err(err) => terminate!(EXIT_FAILURE; "can't duplicate master fd: {}", err),
         };
-        File::from(master_fd)
+        match InterruptibleWriter::open(master_fd) {
+            Ok(writer) => Arc::new(writer),
+            Err(err) => terminate!(EXIT_FAILURE; "can't open master pty for writing: {}", err),
+        }
     };
 
     // Reader for master pty (reads from child's stdout+stderr).
     let pty_reader = {
         let master_fd = match pty_proc.dup_master() {
             Ok(fd) => fd,
-            Err(err) => terminate!(EXIT_FAILURE; "can't duplicate master: {}", err),
+            Err(err) => terminate!(EXIT_FAILURE; "can't duplicate master fd: {}", err),
         };
         match InterruptibleReader::open(master_fd) {
             Ok(reader) => Arc::new(reader),
-            Err(err) => terminate!(EXIT_FAILURE; "can't open master for reading: {}", err),
+            Err(err) => terminate!(EXIT_FAILURE; "can't open master pty for reading: {}", err),
         }
     };
 
@@ -761,22 +792,31 @@ fn main() {
         Err(err) => terminate!(EXIT_FAILURE; "can't open stdin for reading: {}", err),
     });
 
-    // Process signals on separate thread.
+    // Allows to write from stdout from one thread and interrupt it from another thread.
+    let stdout_writer = Arc::new(match InterruptibleWriter::open(io::stdout()) {
+        Ok(writer) => writer,
+        Err(err) => terminate!(EXIT_FAILURE; "can't open stdout for writing: {}", err),
+    });
+
+    // Process events on separate thread.
     let process_signals_thread = {
         let pty_proc = Arc::clone(&pty_proc);
         let pty_reader = Arc::clone(&pty_reader);
+        let pty_writer = Arc::clone(&pty_writer);
         let stdin_reader = Arc::clone(&stdin_reader);
+        let buf_queue = Arc::clone(&buf_queue);
+        let timeout = Duration::from_millis(args.quit);
 
-        debug!("spawning process_signals thread");
+        debug!("spawning control thread");
         thread::Builder::new()
             .name("process_signals".to_string())
             .spawn(move || -> Option<Signal> {
-                process_signals(
-                    pty_proc,
-                    pty_reader,
-                    stdin_reader,
-                    Duration::from_millis(args.quit),
-                )
+                // Process signals until child exits or graceful termination is requested.
+                let pending_interrupt = process_signals(pty_proc, timeout);
+                // Proceed graceful termination.
+                initiate_shutdown(stdin_reader, pty_reader, pty_writer, buf_queue, timeout);
+
+                pending_interrupt
             })
             .unwrap()
     };
@@ -784,6 +824,7 @@ fn main() {
     // Read from our stdin and write to child's stdin.
     let stdin_2_pty_thread = {
         let pty_proc = Arc::clone(&pty_proc);
+        let pty_writer = Arc::clone(&pty_writer);
         let stdin_reader = Arc::clone(&stdin_reader);
 
         debug!("spawning stdin_2_pty_thread thread");
@@ -798,12 +839,13 @@ fn main() {
     // Read from buffer queue and write to our stdout.
     let pty_2_stdout_thread = {
         let buf_queue = Arc::clone(&buf_queue);
+        let stdout_writer = Arc::clone(&stdout_writer);
 
         debug!("spawning pty_2_stdout_thread thread");
         thread::Builder::new()
             .name("pty_2_stdout".to_string())
             .spawn(move || {
-                queue_2_stdout(buf_queue);
+                queue_2_stdout(buf_queue, stdout_writer);
             })
             .unwrap()
     };
@@ -811,36 +853,31 @@ fn main() {
     // Read from child stdout and write to output file and to buffer queue.
     // pty_2_stdout() will read from buffer queue and write to our stdout.
     //
-    // This function works until it gets EOF or process_signals() tells it
-    // to exit by interrupting pty_reader.
+    // This function works until it reads EOF from child or is interrupted
+    // from initiate_shutdown().
     debug!("running pty_2_queue_and_file thread");
     pty_2_queue_and_file(
-        pty_reader,
+        &pty_reader,
         out_writer,
         &buf_queue,
         &buf_pool,
         &mut formatter,
     );
 
-    // Tell pty_2_stdout() to exit (after writing all pending buffers).
-    debug!("closing buffer queue");
-    buf_queue.close();
-
-    // Wait until child process exits.
-    debug!("waiting for process_signals_thread");
+    // Wait until child process exits or graceful termination is requested.
+    debug!("waiting for control_thread");
     let pending_interrupt = process_signals_thread.join().unwrap();
 
-    // Tell stdin_2_pty() to terminate.
-    debug!("closing stdin reader");
-    _ = stdin_reader.close();
-
-    // Wait remaining threads.
+    // At this point control thread already instructed all other threads to exit.
+    // We just need to wait until all of them finish.
+    // stdin_2_pty_thread() should quit quickly, and pty_2_stdout_thread() may
+    // potentioally block if stdout is terminal or pipe - this is desired.
     debug!("waiting for pty_2_stdout_thread");
     pty_2_stdout_thread.join().unwrap();
     debug!("waiting for stdin_2_pty_thread");
     stdin_2_pty_thread.join().unwrap();
 
-    // Forward exit status.
+    // Forward exit status or pending interruption signal.
     debug!("forwarding exit status");
     forward_exit_status(pty_proc, pending_interrupt);
 }
