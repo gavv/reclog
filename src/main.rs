@@ -7,6 +7,7 @@ mod shim;
 mod signal;
 mod status;
 mod term;
+mod writer;
 
 use crate::buffer::{BufferPool, BufferQueue};
 use crate::error::SysError;

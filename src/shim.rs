@@ -26,7 +26,13 @@ pub fn gettid() -> i64 {
 
 pub struct SelectFd<'fd> {
     pub fd: BorrowedFd<'fd>,
-    pub ready: bool,
+    pub mask: u32,
+}
+
+impl SelectFd<'_> {
+    pub const READABLE: u32 = 0x1;
+    pub const WRITEABLE: u32 = 0x2;
+    pub const EXCEPTION: u32 = 0x4;
 }
 
 /// Safe shim for libc::select().
@@ -39,7 +45,7 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
 
     let max_fd = select_fds
         .iter()
-        .fold(0, |max_fd, wfd| max(max_fd, wfd.fd.as_raw_fd()));
+        .fold(0, |max_fd, sel_fd| max(max_fd, sel_fd.fd.as_raw_fd()));
 
     // SAFETY: We're holding an BorrowedFd (via SelectFd) for every descriptor
     // during the call, so they're guaranteed to be valid.
@@ -49,12 +55,28 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
     //  - rustix::event::select() is not available on all platforms
     //  - rustix::event::poll() does not work with TTYs on macOS
     unsafe {
-        let mut fds = MaybeUninit::<fd_set>::uninit();
-        FD_ZERO(fds.as_mut_ptr());
-        fds.assume_init();
+        let mut rd_fds = MaybeUninit::<fd_set>::uninit();
+        let mut wr_fds = MaybeUninit::<fd_set>::uninit();
+        let mut ex_fds = MaybeUninit::<fd_set>::uninit();
 
-        for wfd in select_fds.iter() {
-            FD_SET(wfd.fd.as_raw_fd(), fds.as_mut_ptr());
+        FD_ZERO(rd_fds.as_mut_ptr());
+        FD_ZERO(wr_fds.as_mut_ptr());
+        FD_ZERO(ex_fds.as_mut_ptr());
+
+        rd_fds.assume_init();
+        wr_fds.assume_init();
+        ex_fds.assume_init();
+
+        for sel_fd in select_fds.iter() {
+            if sel_fd.mask & SelectFd::READABLE != 0 {
+                FD_SET(sel_fd.fd.as_raw_fd(), rd_fds.as_mut_ptr());
+            }
+            if sel_fd.mask & SelectFd::WRITEABLE != 0 {
+                FD_SET(sel_fd.fd.as_raw_fd(), wr_fds.as_mut_ptr());
+            }
+            if sel_fd.mask & SelectFd::EXCEPTION != 0 {
+                FD_SET(sel_fd.fd.as_raw_fd(), ex_fds.as_mut_ptr());
+            }
         }
 
         let mut nfds;
@@ -62,9 +84,9 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
         loop {
             nfds = libc::select(
                 max_fd + 1,
-                fds.as_mut_ptr(),
-                null_mut(),
-                null_mut(),
+                rd_fds.as_mut_ptr(),
+                wr_fds.as_mut_ptr(),
+                ex_fds.as_mut_ptr(),
                 if tv_timeout.is_some() {
                     tv_timeout.as_mut().unwrap() as *mut timeval
                 } else {
@@ -80,9 +102,16 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
             break;
         }
 
-        for wfd in select_fds.iter_mut() {
-            if FD_ISSET(wfd.fd.as_raw_fd(), fds.as_mut_ptr()) {
-                wfd.ready = true;
+        for sel_fd in select_fds.iter_mut() {
+            sel_fd.mask = 0;
+            if FD_ISSET(sel_fd.fd.as_raw_fd(), rd_fds.as_mut_ptr()) {
+                sel_fd.mask |= SelectFd::READABLE;
+            }
+            if FD_ISSET(sel_fd.fd.as_raw_fd(), wr_fds.as_mut_ptr()) {
+                sel_fd.mask |= SelectFd::WRITEABLE;
+            }
+            if FD_ISSET(sel_fd.fd.as_raw_fd(), ex_fds.as_mut_ptr()) {
+                sel_fd.mask |= SelectFd::EXCEPTION;
             }
         }
     };

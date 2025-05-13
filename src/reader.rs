@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(PartialEq)]
-enum Mode {
+enum ReaderMode {
     Timeout(Duration),
     NoTimeout,
     Closed,
@@ -17,7 +17,7 @@ enum Mode {
 /// Allows to read from fd in one thread and interrupt read or change
 /// read timeout from another thread.
 pub struct InterruptibleReader<Fd: AsFd> {
-    mode: Mutex<Mode>,
+    mode: Mutex<ReaderMode>,
     fd: Fd,
     pipe_rd: OwnedFd,
     pipe_wr: OwnedFd,
@@ -33,7 +33,7 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
         };
 
         Ok(InterruptibleReader {
-            mode: Mutex::new(Mode::NoTimeout),
+            mode: Mutex::new(ReaderMode::NoTimeout),
             fd,
             pipe_rd,
             pipe_wr,
@@ -46,10 +46,10 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
         {
             // update mode
             let mut locked_mode = self.mode.lock().unwrap();
-            if *locked_mode == Mode::Closed {
+            if *locked_mode == ReaderMode::Closed {
                 return Ok(());
             }
-            *locked_mode = Mode::Closed;
+            *locked_mode = ReaderMode::Closed;
         }
 
         // wake up and abort blocked read
@@ -66,10 +66,10 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
         {
             // update mode
             let mut locked_mode = self.mode.lock().unwrap();
-            if *locked_mode == Mode::Closed {
+            if *locked_mode == ReaderMode::Closed {
                 return Ok(());
             }
-            *locked_mode = Mode::Timeout(duration);
+            *locked_mode = ReaderMode::Timeout(duration);
         }
 
         // wake up and restart blocked read
@@ -95,11 +95,11 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
                 let locked_mode = self.mode.lock().unwrap();
                 match *locked_mode {
                     // read with timeout
-                    Mode::Timeout(d) => Some(d),
+                    ReaderMode::Timeout(d) => Some(d),
                     // read without timeout
-                    Mode::NoTimeout => None,
+                    ReaderMode::NoTimeout => None,
                     // closeed, return EOF
-                    Mode::Closed => {
+                    ReaderMode::Closed => {
                         return Ok(0);
                     }
                 }
@@ -108,25 +108,25 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
             // wait until descriptor is ready or timeout expires
             let mut pipe_fd = SelectFd {
                 fd: self.pipe_rd.as_fd(),
-                ready: false,
+                mask: SelectFd::READABLE,
             };
             let mut data_fd = SelectFd {
                 fd: self.fd.as_fd(),
-                ready: false,
+                mask: SelectFd::READABLE,
             };
             shim::select(&mut [&mut pipe_fd, &mut data_fd], timeout)?;
 
-            if pipe_fd.ready {
+            if pipe_fd.mask != 0 {
                 // wake up from set_timeout() or close()
                 // drain bytes from pipe
                 _ = shim::read(&self.pipe_rd, &mut [0u8; 128]);
             }
-            if data_fd.ready {
+            if data_fd.mask != 0 {
                 // data from file
                 break;
             }
 
-            if !pipe_fd.ready && !data_fd.ready && timeout.is_some() {
+            if pipe_fd.mask == 0 && data_fd.mask == 0 && timeout.is_some() {
                 // timeout expired, return EOF
                 return Ok(0);
             }
