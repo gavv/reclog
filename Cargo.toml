@@ -42,4 +42,4 @@ features = ["std", "alloc", "now", "clock", "iana-time-zone", "android-tzdata"]
 
 [dependencies.rustix]
 version = "1.0.3"
-features = ["stdio", "process", "pipe", "event", "pty", "termios", "system"]
+features = ["stdio", "process", "pipe", "event", "pty", "termios", "system", "thread"]

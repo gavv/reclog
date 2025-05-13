@@ -4,6 +4,7 @@ use libc::{self, fd_set, suseconds_t, time_t, timespec, timeval};
 use libc::{FD_ISSET, FD_SET, FD_ZERO};
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal};
+use rustix::thread;
 use std::cmp::max;
 use std::ffi::CStr;
 use std::io::Error;
@@ -16,6 +17,11 @@ use std::time::Duration;
 /// Get errno from last libc call.
 fn last_errno() -> Errno {
     Errno::from_io_error(&Error::last_os_error()).unwrap()
+}
+
+/// Get current thread ID.
+pub fn gettid() -> i64 {
+    thread::gettid().as_raw_nonzero().get() as i64
 }
 
 pub struct SelectFd<'fd> {

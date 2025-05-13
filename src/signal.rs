@@ -4,7 +4,7 @@ use rustix::process::{self, Signal};
 use std::time::Duration;
 
 /// Signals groupped into event categories.
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum SignalEvent {
     Interrupt(Signal),
     Quit(Signal),
@@ -46,6 +46,15 @@ fn to_event(sig: Signal) -> SignalEvent {
         Signal::CHILD => SignalEvent::Child(sig),
         Signal::WINCH => SignalEvent::Resize(sig),
         _ => SignalEvent::Unknown(sig),
+    }
+}
+
+/// Get human-readable name for signal.
+pub fn display_name(sig: Signal) -> String {
+    if let Some(sig_name) = Signal::from_named_raw(sig.as_raw()) {
+        format!("{:?}", sig_name).replace("Signal::", "SIG")
+    } else {
+        format!("[{}]", sig.as_raw())
     }
 }
 
