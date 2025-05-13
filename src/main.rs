@@ -868,6 +868,13 @@ fn main() {
     debug!("waiting for control_thread");
     let pending_interrupt = process_signals_thread.join().unwrap();
 
+    // At this point, process_signals() exited and leaved all signals blocked.
+    // We're now in the process of graceful termination. Normally it will finish
+    // quickly after writing pending data to stdout, but we still want to give
+    // user a way of forcibly interrupting us in case of trouble. In this final
+    // stage we unblock and reset all signals, so that ^C or ^\ can kill us.
+    _ = signal::unblock_all_signals();
+
     // At this point control thread already instructed all other threads to exit.
     // We just need to wait until all of them finish.
     // stdin_2_pty_thread() should quit quickly, and pty_2_stdout_thread() may

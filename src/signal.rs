@@ -104,6 +104,23 @@ pub fn init_child_signals() -> Result<(), SysError> {
     Ok(())
 }
 
+/// Unblock all signals.
+pub fn unblock_all_signals() -> Result<(), SysError> {
+    // Default dispositions for everything.
+    for sig in PROCESSED_SIGNALS {
+        if let Err(err) = shim::sigaction(sig, SigAction::Default) {
+            return Err(SysError("sigaction()", err));
+        }
+    }
+
+    // Unblock what we've blocked in parent.
+    if let Err(err) = shim::sigmask(&PROCESSED_SIGNALS, SigMask::Unblock) {
+        return Err(SysError("sigmask()", err));
+    }
+
+    Ok(())
+}
+
 /// Wait next signal.
 pub fn wait_signal(timeout: Option<Duration>) -> Result<SignalEvent, SysError> {
     loop {
