@@ -205,7 +205,7 @@ macro_rules! debug {
         if DEBUG.load(Ordering::Relaxed) {
             eprintln!(
                 concat!("reclog: {}: ", $fmt),
-                thread::current().name().unwrap_or(shim::gettid().to_string().as_str()),
+                thread::current().name().unwrap_or("unnamed"),
                 $($args),*);
         }
     });
