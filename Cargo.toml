@@ -13,6 +13,12 @@ authors = ["Victor Gaydov <victor@enise.org>"]
 name = "reclog"
 path = "src/main.rs"
 
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
 [lints.rust]
 dead_code = "allow"
 
