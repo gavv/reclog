@@ -23,6 +23,11 @@ redundant_closure = "allow"
 redundant_pattern_matching = "allow"
 unnecessary_unwrap = "allow"
 
+[build-dependencies]
+cargo_toml = "0.22.1"
+hex = "0.4.3"
+sha2 = "0.10.9"
+
 [dependencies]
 exec = "0.3.1"
 libc = "0.2.171"
