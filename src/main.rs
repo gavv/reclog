@@ -341,8 +341,10 @@ fn process_signals(pty_proc: Arc<PtyProc>, timeout: Duration) -> Option<Signal> 
                     _ = pty_proc.kill_child(sig);
 
                     debug!("waiting for any signal or timeout");
-                    if let Err(err) = signal::wait_signal(Some(timeout)) {
-                        terminate!(EXIT_FAILURE; "can't wait for signal: {}", err);
+                    match signal::wait_signal(Some(timeout)) {
+                        Ok(SignalEvent::Timeout) => debug!("timeout expired"),
+                        Ok(ev) => debug!("received event: {:?}", ev),
+                        Err(err) => terminate!(EXIT_FAILURE; "can't wait for signal: {}", err),
                     }
                 }
                 match pty_proc.wait_child(PtyWait::NoHang) {
@@ -661,7 +663,10 @@ fn forward_exit_status(pty_proc: Arc<PtyProc>, pending_interrupt: Option<Signal>
                 // Command was not killed by itself - we killed it because *we* received
                 // death signal from user (e.g. ^C) - then we don't need to print any error
                 // message, just process original signal and die.
-                debug!("delivering pending {:?} signal to ourselves", sig);
+                debug!(
+                    "delivering pending signal {} to ourselves",
+                    signal::display_name(sig)
+                );
                 if let Err(err) = raise_signal(sig) {
                     terminate!(EXIT_FAILURE; "can't raise signal: {}", err);
                 }
@@ -866,7 +871,7 @@ fn main() {
     );
 
     // Wait until child process exits or graceful termination is requested.
-    debug!("waiting for control_thread");
+    debug!("waiting for process_signals_thread");
     let pending_interrupt = process_signals_thread.join().unwrap();
 
     // At this point, process_signals() exited and leaved all signals blocked.
@@ -874,7 +879,7 @@ fn main() {
     // quickly after writing pending data to stdout, but we still want to give
     // user a way of forcibly interrupting us in case of trouble. In this final
     // stage we unblock and reset all signals, so that ^C or ^\ can kill us.
-    _ = signal::unblock_all_signals();
+    _ = signal::unblock_signals();
 
     // At this point control thread already instructed all other threads to exit.
     // We just need to wait until all of them finish.

@@ -258,20 +258,24 @@ pub fn fcntl_nonblock<Fd: AsFd>(fd: Fd, non_block: bool) -> Result<(), Errno> {
 pub enum SigAction {
     Default,
     Ignore,
+    Noop,
 }
 
 /// Safe shim for sigaction().
 pub fn sigaction(sig: Signal, action: SigAction) -> Result<(), Errno> {
+    extern "C" fn noop(_sig: libc::c_int) {}
+
     let handler = match action {
         SigAction::Default => libc::SIG_DFL,
         SigAction::Ignore => libc::SIG_IGN,
+        SigAction::Noop => noop as libc::sighandler_t,
     };
 
     let ret = unsafe {
         let mut sa: libc::sigaction = mem::zeroed();
         sa.sa_sigaction = handler;
         sa.sa_flags = libc::SA_RESTART;
-        libc::sigfillset(&mut sa.sa_mask as *mut libc::sigset_t);
+        libc::sigemptyset(&mut sa.sa_mask as *mut libc::sigset_t);
 
         libc::sigaction(sig.as_raw(), &sa, null_mut())
     };

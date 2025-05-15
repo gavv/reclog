@@ -3,21 +3,13 @@ use crate::shim::{self, SigAction, SigMask};
 use rustix::process::{self, Signal};
 use std::time::Duration;
 
-/// Signals groupped into event categories.
-#[derive(Debug, PartialEq)]
-pub enum SignalEvent {
-    Interrupt(Signal),
-    Quit(Signal),
-    Stop(Signal),
-    Continue(Signal),
-    Child(Signal),
-    Resize(Signal),
-    Unknown(Signal),
-    Timeout,
-}
-
-/// List of all signals we're handling.
-const PROCESSED_SIGNALS: [Signal; 10] = [
+/// List of signals that generate events which we want to handle.
+/// Before starting any threads, the main thread blocks all these signals,
+/// and later all created threads inherit the block mask.
+/// Then one of the threads fetches signals one by one using sigwait().
+/// Signals are only unblocked when we want to deliver them to ourselves
+/// in the end of graceful termination or pause.
+const EVENT_SIGNALS: [Signal; 10] = [
     // graceful termination
     Signal::TERM,
     Signal::INT,
@@ -36,6 +28,19 @@ const PROCESSED_SIGNALS: [Signal; 10] = [
     Signal::WINCH,
 ];
 
+/// Signals groupped into event categories.
+#[derive(Debug, PartialEq)]
+pub enum SignalEvent {
+    Interrupt(Signal),
+    Quit(Signal),
+    Stop(Signal),
+    Continue(Signal),
+    Child(Signal),
+    Resize(Signal),
+    Unknown(Signal),
+    Timeout,
+}
+
 /// Categorize signals into higher-level event types.
 fn to_event(sig: Signal) -> SignalEvent {
     match sig {
@@ -45,6 +50,7 @@ fn to_event(sig: Signal) -> SignalEvent {
         Signal::CONT => SignalEvent::Continue(sig),
         Signal::CHILD => SignalEvent::Child(sig),
         Signal::WINCH => SignalEvent::Resize(sig),
+        // all other signals has no special handling outside of this module
         _ => SignalEvent::Unknown(sig),
     }
 }
@@ -60,23 +66,33 @@ pub fn display_name(sig: Signal) -> String {
 
 /// Initialize signal handlers and mask in parent.
 pub fn init_parent_signals() -> Result<(), SysError> {
-    // Block processed signals. We normally will fetch them with sigwait().
-    // Each thread has its own block mask.
-    // New thread initially inherits mask of its parent.
-    // Since we call this in main() before creating any threads, all our
-    // threads will have this mask.
-    if let Err(err) = shim::sigmask(&PROCESSED_SIGNALS, SigMask::Block) {
+    // EVENT_SIGNALS
+    if let Err(err) = shim::sigmask(&EVENT_SIGNALS, SigMask::Block) {
         return Err(SysError("sigmask()", err));
     }
-
-    // Ensure processed signals have their default dispositions.
-    for sig in PROCESSED_SIGNALS {
-        if let Err(err) = shim::sigaction(sig, SigAction::Default) {
+    for sig in EVENT_SIGNALS {
+        let action = if sig == Signal::CHILD {
+            SigAction::Noop
+        } else {
+            SigAction::Default
+        };
+        if let Err(err) = shim::sigaction(sig, action) {
             return Err(SysError("sigaction()", err));
         }
     }
 
-    // Ensure SIGPIPE is ignored and EPIPE is generated instead.
+    // SIGALRM
+    if let Err(err) = shim::sigmask(&[Signal::ALARM], SigMask::Block) {
+        return Err(SysError("sigmask()", err));
+    }
+    if let Err(err) = shim::sigaction(Signal::ALARM, SigAction::Noop) {
+        return Err(SysError("sigaction()", err));
+    }
+
+    // SIGPIPE
+    if let Err(err) = shim::sigmask(&[Signal::PIPE], SigMask::Block) {
+        return Err(SysError("sigmask()", err));
+    }
     if let Err(err) = shim::sigaction(Signal::PIPE, SigAction::Ignore) {
         return Err(SysError("sigaction()", err));
     }
@@ -85,48 +101,53 @@ pub fn init_parent_signals() -> Result<(), SysError> {
 }
 
 /// Initialize signal handlers and mask in child.
+/// This is executed in child after fork() and reverts the changes
+/// made by init_parent_signals() and inherited by new process.
 pub fn init_child_signals() -> Result<(), SysError> {
-    // Default dispositions for everything.
+    // EVENT_SIGNALS
+    if let Err(err) = shim::sigmask(&EVENT_SIGNALS, SigMask::Unblock) {
+        return Err(SysError("sigmask()", err));
+    }
+    for sig in EVENT_SIGNALS {
+        if let Err(err) = shim::sigaction(sig, SigAction::Default) {
+            return Err(SysError("sigaction()", err));
+        }
+    }
+
+    // SIGALRM
+    if let Err(err) = shim::sigmask(&[Signal::ALARM], SigMask::Unblock) {
+        return Err(SysError("sigmask()", err));
+    }
+    if let Err(err) = shim::sigaction(Signal::ALARM, SigAction::Default) {
+        return Err(SysError("sigaction()", err));
+    }
+
+    // SIGPIPE
+    if let Err(err) = shim::sigmask(&[Signal::PIPE], SigMask::Unblock) {
+        return Err(SysError("sigmask()", err));
+    }
     if let Err(err) = shim::sigaction(Signal::PIPE, SigAction::Default) {
         return Err(SysError("sigaction()", err));
     }
-    for sig in PROCESSED_SIGNALS {
-        if let Err(err) = shim::sigaction(sig, SigAction::Default) {
-            return Err(SysError("sigaction()", err));
-        }
-    }
 
-    // Unblock what we've blocked in parent.
-    if let Err(err) = shim::sigmask(&PROCESSED_SIGNALS, SigMask::Unblock) {
+    Ok(())
+}
+
+/// Unblock event signals that we've blocked.
+pub fn unblock_signals() -> Result<(), SysError> {
+    if let Err(err) = shim::sigmask(&EVENT_SIGNALS, SigMask::Unblock) {
         return Err(SysError("sigmask()", err));
     }
 
     Ok(())
 }
 
-/// Unblock all signals.
-pub fn unblock_all_signals() -> Result<(), SysError> {
-    // Default dispositions for everything.
-    for sig in PROCESSED_SIGNALS {
-        if let Err(err) = shim::sigaction(sig, SigAction::Default) {
-            return Err(SysError("sigaction()", err));
-        }
-    }
-
-    // Unblock what we've blocked in parent.
-    if let Err(err) = shim::sigmask(&PROCESSED_SIGNALS, SigMask::Unblock) {
-        return Err(SysError("sigmask()", err));
-    }
-
-    Ok(())
-}
-
-/// Wait next signal.
+/// Wait next event signal.
 pub fn wait_signal(timeout: Option<Duration>) -> Result<SignalEvent, SysError> {
     loop {
         // Wait for any of the processed signals to be trigerred.
-        let maybe_sig = shim::sigwait(&PROCESSED_SIGNALS, timeout)
-            .map_err(|err| SysError("sigwait()", err))?;
+        let maybe_sig =
+            shim::sigwait(&EVENT_SIGNALS, timeout).map_err(|err| SysError("sigwait()", err))?;
 
         if let Some(sig) = maybe_sig {
             let event = to_event(sig);
@@ -140,9 +161,9 @@ pub fn wait_signal(timeout: Option<Duration>) -> Result<SignalEvent, SysError> {
     }
 }
 
-/// Drop pending signal.
+/// Drop pending event signal.
 pub fn drop_signal(sig: Signal) -> Result<(), SysError> {
-    if let Err(err) = shim::sigwait(&[sig], Some(Duration::from_millis(0))) {
+    if let Err(err) = shim::sigwait(&[sig], Some(Duration::ZERO)) {
         return Err(SysError("sigwait()", err));
     }
 
