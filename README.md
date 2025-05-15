@@ -99,7 +99,7 @@ Platforms
 
 The program is written using POSIX interfaces, and any UNIX-like OS should be fine, including Linux, BSD, and macOS.
 
-However, only Linux was tested so far.
+So far, only Linux and macOS was tested.
 
 Prerequisites
 -------------
