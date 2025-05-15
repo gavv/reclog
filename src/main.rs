@@ -203,10 +203,10 @@ static DEBUG: AtomicBool = AtomicBool::new(false);
 macro_rules! debug {
     ($fmt:expr $(,$args:expr)*) => ({
         if DEBUG.load(Ordering::Relaxed) {
-            eprintln!(
-                concat!("reclog: {}: ", $fmt),
+            let msg = format!(concat!("reclog: {}: ", $fmt, "\n"),
                 thread::current().name().unwrap_or("unnamed"),
-                $($args),*);
+                              $($args),*);
+            _ = shim::write_all(std::io::stderr(), msg.as_bytes());
         }
     });
 }
@@ -220,12 +220,14 @@ macro_rules! terminate {
         process::exit($code);
     }};
     ($code:expr; $fmt:expr) => ({
-        eprintln!(concat!("reclog: ", $fmt));
+        let msg = format!(concat!("reclog: ", $fmt, "\n"));
+        _ = shim::write_all(std::io::stderr(), msg.as_bytes());
         before_exit();
         process::exit($code);
     });
     ($code:expr; $fmt:expr, $($args:expr),+) => ({
-        eprintln!(concat!("reclog: ", $fmt), $($args),+);
+        let msg = format!(concat!("reclog: ", $fmt, "\n"), $($args),+);
+        _ = shim::write_all(std::io::stderr(), msg.as_bytes());
         before_exit();
         process::exit($code);
     });

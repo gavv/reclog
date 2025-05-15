@@ -187,8 +187,28 @@ pub fn read<Fd: AsFd>(fd: Fd, buf: &mut [u8]) -> Result<usize, Errno> {
 
 /// Safe shim for libc::write().
 /// Handles EINTR.
-/// Handles partial writes.
 pub fn write<Fd: AsFd>(fd: Fd, buf: &[u8]) -> Result<usize, Errno> {
+    loop {
+        let ret = unsafe {
+            libc::write(
+                fd.as_fd().as_raw_fd(),
+                buf.as_ptr() as *mut libc::c_void,
+                buf.len(),
+            )
+        };
+        if ret < 0 {
+            if last_errno() == Errno::INTR {
+                continue;
+            }
+            return Err(last_errno());
+        }
+        return Ok(ret as usize);
+    }
+}
+
+/// Safe shim for libc::write().
+/// Handles EINTR, EAGAIN, and partial writes.
+pub fn write_all<Fd: AsFd>(fd: Fd, buf: &[u8]) -> Result<usize, Errno> {
     let mut pos = 0;
     while pos < buf.len() {
         let ret = unsafe {
@@ -198,14 +218,14 @@ pub fn write<Fd: AsFd>(fd: Fd, buf: &[u8]) -> Result<usize, Errno> {
                 buf.len() - pos,
             )
         };
+        if ret == 0 {
+            continue;
+        }
         if ret < 0 {
-            if last_errno() == Errno::INTR {
+            if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
                 continue;
             }
             return Err(last_errno());
-        }
-        if ret == 0 {
-            break;
         }
         pos += ret as usize;
     }

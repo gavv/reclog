@@ -129,21 +129,21 @@ impl<Fd: AsFd> InterruptibleReader<Fd> {
                 // drain bytes from pipe
                 _ = shim::read(&self.pipe_rd, &mut [0u8; 128]);
             }
+
             if data_fd.mask != 0 {
-                // data from file
-                break;
+                // file is readable
+                match shim::read(&self.fd, buf) {
+                    Ok(0) => continue,
+                    Ok(n) => return Ok(n),
+                    Err(Errno::AGAIN) => continue,
+                    Err(err) => return Err(Error::new(err.kind(), err)),
+                }
             }
 
             if pipe_fd.mask == 0 && data_fd.mask == 0 && timeout.is_some() {
                 // timeout expired, return EOF
                 return Ok(0);
             }
-        }
-
-        // if we're here, there is new data in file
-        match shim::read(&self.fd, buf) {
-            Ok(n) => Ok(n),
-            Err(err) => Err(Error::new(err.kind(), err)),
         }
     }
 }

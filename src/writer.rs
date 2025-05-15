@@ -98,16 +98,16 @@ impl<Fd: AsFd> InterruptibleWriter<Fd> {
                 // drain bytes from pipe
                 _ = shim::read(&self.pipe_rd, &mut [0u8; 128]);
             }
+
             if data_fd.mask != 0 {
                 // file is writeable
-                break;
+                match shim::write(&self.fd, buf) {
+                    Ok(0) => continue,
+                    Ok(n) => return Ok(n),
+                    Err(Errno::AGAIN) => continue,
+                    Err(err) => return Err(Error::new(err.kind(), err)),
+                }
             }
-        }
-
-        // if we're here, file is writeable
-        match shim::write(&self.fd, buf) {
-            Ok(n) => Ok(n),
-            Err(err) => Err(Error::new(err.kind(), err)),
         }
     }
 }
