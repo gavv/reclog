@@ -18,8 +18,13 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    runs-on: ubuntu-latest
+  main:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,8 +34,14 @@ jobs:
         with:
           components: clippy
 
-      - name: Build
-        run: cargo build
+      - name: Dev build
+        run: make dev
 
-      - name: Lint
-        run: cargo clippy
+      - name: Release build
+        run: make
+
+      - name: Install
+        run: sudo make install
+
+      - name: Uninstall
+        run: sudo make uninstall
