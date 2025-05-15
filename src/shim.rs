@@ -1,7 +1,6 @@
 #![allow(clippy::unnecessary_cast)]
 
-use libc::{self, fd_set, suseconds_t, time_t, timespec, timeval};
-use libc::{FD_ISSET, FD_SET, FD_ZERO};
+use libc::{self, FD_ISSET, FD_SET, FD_ZERO};
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal};
 use std::cmp::max;
@@ -32,9 +31,9 @@ impl SelectFd<'_> {
 /// Safe shim for libc::select().
 /// Handles EINTR.
 pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Result<(), Errno> {
-    let mut tv_timeout = timeout.map(|d| timeval {
-        tv_sec: d.as_secs() as time_t,
-        tv_usec: d.subsec_micros() as suseconds_t,
+    let mut tv_timeout = timeout.map(|d| libc::timeval {
+        tv_sec: d.as_secs() as libc::time_t,
+        tv_usec: d.subsec_micros() as libc::suseconds_t,
     });
 
     let max_fd = select_fds
@@ -49,9 +48,9 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
     //  - rustix::event::select() is not available on all platforms
     //  - rustix::event::poll() does not work with TTYs on macOS
     unsafe {
-        let mut rd_fds = MaybeUninit::<fd_set>::uninit();
-        let mut wr_fds = MaybeUninit::<fd_set>::uninit();
-        let mut ex_fds = MaybeUninit::<fd_set>::uninit();
+        let mut rd_fds = MaybeUninit::<libc::fd_set>::uninit();
+        let mut wr_fds = MaybeUninit::<libc::fd_set>::uninit();
+        let mut ex_fds = MaybeUninit::<libc::fd_set>::uninit();
 
         FD_ZERO(rd_fds.as_mut_ptr());
         FD_ZERO(wr_fds.as_mut_ptr());
@@ -82,7 +81,7 @@ pub fn select(select_fds: &mut [&mut SelectFd], timeout: Option<Duration>) -> Re
                 wr_fds.as_mut_ptr(),
                 ex_fds.as_mut_ptr(),
                 if tv_timeout.is_some() {
-                    tv_timeout.as_mut().unwrap() as *mut timeval
+                    tv_timeout.as_mut().unwrap() as *mut libc::timeval
                 } else {
                     null_mut()
                 },
@@ -263,14 +262,14 @@ pub enum SigAction {
 
 /// Safe shim for sigaction().
 pub fn sigaction(sig: Signal, action: SigAction) -> Result<(), Errno> {
-    let hnd = match action {
+    let handler = match action {
         SigAction::Default => libc::SIG_DFL,
         SigAction::Ignore => libc::SIG_IGN,
     };
 
     let ret = unsafe {
         let mut sa: libc::sigaction = mem::zeroed();
-        sa.sa_sigaction = hnd;
+        sa.sa_sigaction = handler;
         sa.sa_flags = libc::SA_RESTART;
         libc::sigfillset(&mut sa.sa_mask as *mut libc::sigset_t);
 
@@ -296,12 +295,28 @@ pub fn sigmask(sig_list: &[Signal], action: SigMask) -> Result<(), Errno> {
     };
 
     let ret = unsafe {
-        let mut sm: libc::sigset_t = mem::zeroed();
+        let mut sig_set: libc::sigset_t = mem::zeroed();
+        libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
         for sig in sig_list {
-            libc::sigaddset(&mut sm as *mut libc::sigset_t, sig.as_raw() as libc::c_int);
+            libc::sigaddset(
+                &mut sig_set as *mut libc::sigset_t,
+                sig.as_raw() as libc::c_int,
+            );
         }
 
-        libc::pthread_sigmask(how, &mut sm as *mut libc::sigset_t, null_mut())
+        #[cfg(has_pthread_sigmask)]
+        {
+            libc::pthread_sigmask(how, &mut sig_set as *mut libc::sigset_t, null_mut())
+        }
+
+        // If pthread_sigmask() isn't available, we fallback to sigprocmask().
+        // POSIX does not specify how sigprocmask behaves in case of multiple threads.
+        // If we're lucky, sigprocmask() works per-thread on this system (i.e. same as
+        // pthread_sigmask), which is true at least on some platforms.
+        #[cfg(not(has_pthread_sigmask))]
+        {
+            libc::sigprocmask(how, &mut sig_set as *mut libc::sigset_t, null_mut())
+        }
     };
     if ret < 0 {
         return Err(last_errno());
@@ -310,37 +325,44 @@ pub fn sigmask(sig_list: &[Signal], action: SigMask) -> Result<(), Errno> {
     Ok(())
 }
 
-/// Safe shim for sigwait().
+/// Safe shim for sigwait() with optional timeout.
+/// Uses sigtimedwait() or sigwaitinfo().
+#[cfg(has_sigtimedwait)]
 pub fn sigwait(sig_list: &[Signal], timeout: Option<Duration>) -> Result<Option<Signal>, Errno> {
-    let mut ts_timeout = timeout.map(|d| timespec {
-        tv_sec: d.as_secs() as time_t,
+    let mut ts_timeout = timeout.map(|d| libc::timespec {
+        tv_sec: d.as_secs() as libc::time_t,
         tv_nsec: d.subsec_nanos() as i64,
     });
 
     let mut ret;
     loop {
         unsafe {
-            let mut sm: libc::sigset_t = mem::zeroed();
+            let mut sig_set: libc::sigset_t = mem::zeroed();
+            libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
             for sig in sig_list {
-                libc::sigaddset(&mut sm as *mut libc::sigset_t, sig.as_raw() as libc::c_int);
+                libc::sigaddset(
+                    &mut sig_set as *mut libc::sigset_t,
+                    sig.as_raw() as libc::c_int,
+                );
             }
 
             let mut sig_info: libc::siginfo_t = mem::zeroed();
             if ts_timeout.is_some() {
                 ret = libc::sigtimedwait(
-                    &mut sm as *mut libc::sigset_t,
+                    &mut sig_set as *mut libc::sigset_t,
                     &mut sig_info as *mut libc::siginfo_t,
-                    ts_timeout.as_mut().unwrap() as *mut timespec,
+                    ts_timeout.as_mut().unwrap() as *mut libc::timespec,
                 );
             } else {
                 ret = libc::sigwaitinfo(
-                    &mut sm as *mut libc::sigset_t,
+                    &mut sig_set as *mut libc::sigset_t,
                     &mut sig_info as *mut libc::siginfo_t,
                 )
             }
         };
         if ret < 0 {
             if last_errno() == Errno::AGAIN {
+                // Timeout expired.
                 return Ok(None);
             }
             if last_errno() == Errno::INTR {
@@ -352,6 +374,253 @@ pub fn sigwait(sig_list: &[Signal], timeout: Option<Duration>) -> Result<Option<
     }
 
     let sig_no = ret as i32;
+    match Signal::from_named_raw(sig_no) {
+        Some(sig) => Ok(Some(sig)),
+        None => Err(Errno::INVAL),
+    }
+}
+
+/// Safe shim for sigwait() with optional timeout.
+/// Uses sigwait() and timer_create().
+#[cfg(all(not(has_sigtimedwait), has_timer_create))]
+pub fn sigwait(sig_list: &[Signal], timeout: Option<Duration>) -> Result<Option<Signal>, Errno> {
+    // We use SIGALRM, which makes this function not usable from concurrent threads.
+    static MUTEX: Mutex<()> = Mutex::new(());
+    let _guard = MUTEX.lock();
+
+    let ts_timeout = timeout.map(|d| libc::timespec {
+        tv_sec: d.as_secs() as libc::time_t,
+        tv_nsec: d.subsec_nanos() as i64,
+    });
+
+    let mut sig_no: libc::c_int = 0;
+    loop {
+        unsafe {
+            // If zero timeout is given, call sigwait() only if signal is already pending.
+            if timeout.is_some() && timeout.unwrap().is_zero() {
+                let mut sig_set: libc::sigset_t = mem::zeroed();
+                libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+                libc::sigpending(&mut sig_set as *mut libc::sigset_t);
+
+                if !sig_list.iter().any(|sig| {
+                    libc::sigismember(
+                        &mut sig_set as *mut libc::sigset_t,
+                        sig.as_raw() as libc::c_int,
+                    ) == 1
+                }) {
+                    return Ok(None);
+                }
+            }
+
+            // If positive timeout is given, set timer for SIGALRM.
+            let mut timer: libc::timer_t = mem::zeroed();
+
+            if timeout.is_some() && !timeout.unwrap().is_zero() {
+                let mut timer_sig: libc::sigevent = mem::zeroed();
+                timer_sig.sigev_notify = libc::SIGEV_SIGNAL;
+                timer_sig.sigev_signo = libc::SIGALRM;
+
+                if libc::timer_create(
+                    libc::CLOCK_MONOTONIC,
+                    &mut timer_sig as *mut libc::sigevent,
+                    &mut timer as *mut libc::timer_t,
+                ) < 0
+                {
+                    if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
+                        continue;
+                    }
+                    return Err(last_errno());
+                }
+
+                let mut timer_spec: libc::itimerspec = mem::zeroed();
+                timer_spec.it_value = ts_timeout.unwrap();
+
+                if libc::timer_settime(
+                    timer,
+                    0,
+                    &mut timer_spec as *mut libc::itimerspec,
+                    null_mut(),
+                ) < 0
+                {
+                    if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
+                        continue;
+                    }
+                    return Err(last_errno());
+                }
+            }
+
+            // Wait for signal.
+            let mut sig_set: libc::sigset_t = mem::zeroed();
+            libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+            for sig in sig_list {
+                libc::sigaddset(
+                    &mut sig_set as *mut libc::sigset_t,
+                    sig.as_raw() as libc::c_int,
+                );
+            }
+            if timeout.is_some() {
+                libc::sigaddset(&mut sig_set as *mut libc::sigset_t, libc::SIGALRM);
+            }
+
+            let err = libc::sigwait(
+                &mut sig_set as *mut libc::sigset_t,
+                &mut sig_no as *mut libc::c_int,
+            );
+
+            if timeout.is_some() {
+                // Delete timer.
+                libc::timer_delete(timer);
+
+                // Clear pending SIGALRM.
+                let mut sig_set: libc::sigset_t = mem::zeroed();
+                libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+                libc::sigpending(&mut sig_set as *mut libc::sigset_t);
+
+                if libc::sigismember(&mut sig_set as *mut libc::sigset_t, libc::SIGALRM) == 1 {
+                    libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+                    libc::sigaddset(&mut sig_set as *mut libc::sigset_t, libc::SIGALRM);
+
+                    let mut ignore_sig = 0;
+                    libc::sigwait(
+                        &mut sig_set as *mut libc::sigset_t,
+                        &mut ignore_sig as *mut libc::c_int,
+                    );
+                }
+            }
+
+            if err != 0 {
+                if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
+                    continue;
+                }
+                return Err(Errno::from_raw_os_error(err));
+            }
+            if sig_no == libc::SIGALRM {
+                return Ok(None); // timeout expired
+            }
+            break;
+        }
+    }
+
+    match Signal::from_named_raw(sig_no) {
+        Some(sig) => Ok(Some(sig)),
+        None => Err(Errno::INVAL),
+    }
+}
+
+/// Safe shim for sigwait() with optional timeout.
+/// Uses sigwait() and setitimer().
+#[cfg(all(not(has_sigtimedwait), not(has_timer_create)))]
+pub fn sigwait(sig_list: &[Signal], timeout: Option<Duration>) -> Result<Option<Signal>, Errno> {
+    // We use SIGALRM, which makes this function not usable from concurrent threads.
+    static MUTEX: Mutex<()> = Mutex::new(());
+    let _guard = MUTEX.lock();
+
+    let tv_timeout = timeout.map(|d| libc::timeval {
+        tv_sec: d.as_secs() as libc::time_t,
+        tv_usec: d.subsec_micros() as libc::suseconds_t,
+    });
+
+    let mut sig_no: libc::c_int = 0;
+    loop {
+        unsafe {
+            // If zero timeout is given, call sigwait() only if signal is already pending.
+            if timeout.is_some() && timeout.unwrap().is_zero() {
+                let mut sig_set: libc::sigset_t = mem::zeroed();
+                libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+                libc::sigpending(&mut sig_set as *mut libc::sigset_t);
+
+                if !sig_list.iter().any(|sig| {
+                    libc::sigismember(
+                        &mut sig_set as *mut libc::sigset_t,
+                        sig.as_raw() as libc::c_int,
+                    ) == 1
+                }) {
+                    return Ok(None);
+                }
+            }
+
+            // If positive timeout is given, set timer for SIGALRM.
+            if timeout.is_some() && !timeout.unwrap().is_zero() {
+                let mut timer_val: libc::itimerval = mem::zeroed();
+                timer_val.it_value = tv_timeout.unwrap();
+
+                if libc::setitimer(
+                    libc::ITIMER_REAL,
+                    &mut timer_val as *mut libc::itimerval,
+                    null_mut(),
+                ) < 0
+                {
+                    if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
+                        continue;
+                    }
+                    return Err(last_errno());
+                }
+            }
+
+            // Wait for signal.
+            let mut sig_set: libc::sigset_t = mem::zeroed();
+            libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+            for sig in sig_list {
+                libc::sigaddset(
+                    &mut sig_set as *mut libc::sigset_t,
+                    sig.as_raw() as libc::c_int,
+                );
+            }
+            if timeout.is_some() {
+                libc::sigaddset(&mut sig_set as *mut libc::sigset_t, libc::SIGALRM);
+            }
+
+            let err = libc::sigwait(
+                &mut sig_set as *mut libc::sigset_t,
+                &mut sig_no as *mut libc::c_int,
+            );
+
+            if timeout.is_some() {
+                // Clear timer.
+                let mut timer_val: libc::itimerval = mem::zeroed();
+
+                if libc::setitimer(
+                    libc::ITIMER_REAL,
+                    &mut timer_val as *mut libc::itimerval,
+                    null_mut(),
+                ) < 0
+                {
+                    if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
+                        continue;
+                    }
+                    return Err(last_errno());
+                }
+
+                // Clear pending SIGALRM.
+                let mut sig_set: libc::sigset_t = mem::zeroed();
+                libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+                libc::sigpending(&mut sig_set as *mut libc::sigset_t);
+
+                if libc::sigismember(&mut sig_set as *mut libc::sigset_t, libc::SIGALRM) == 1 {
+                    libc::sigemptyset(&mut sig_set as *mut libc::sigset_t);
+                    libc::sigaddset(&mut sig_set as *mut libc::sigset_t, libc::SIGALRM);
+
+                    let mut ignore_sig = 0;
+                    libc::sigwait(
+                        &mut sig_set as *mut libc::sigset_t,
+                        &mut ignore_sig as *mut libc::c_int,
+                    );
+                }
+            }
+
+            if err != 0 {
+                if last_errno() == Errno::AGAIN || last_errno() == Errno::INTR {
+                    continue;
+                }
+                return Err(Errno::from_raw_os_error(err));
+            }
+            if sig_no == libc::SIGALRM {
+                return Ok(None); // timeout expired
+            }
+            break;
+        }
+    }
+
     match Signal::from_named_raw(sig_no) {
         Some(sig) => Ok(Some(sig)),
         None => Err(Errno::INVAL),
