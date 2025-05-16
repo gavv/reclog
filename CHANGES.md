@@ -1,11 +1,26 @@
 # Changelog
 
+## [v0.1.5][v0.1.5] - 16 May 2025
+
+* Fix hang on EOF from stdin ([fc6704d][fc6704d])
+* Fix handling of EIO/EPIPE from pty ([ee17afb][ee17afb])
+* Fix handling of SIGHUP ([eed2211][eed2211])
+* Set default `-q` timeout to 15ms and update documentation
+* Fix concurrent termination (when error happens in two thread simultaneously)
+* Improve documentaion: stdin/stdout, session, signals
+
+[v0.1.5]: https://github.com/gavv/reclog/releases/tag/v0.1.5
+
+[fc6704d]: https://github.com/gavv/reclog/commit/fc6704dfde92fe6a1280c4f8a39d53b076733112
+[ee17afb]: https://github.com/gavv/reclog/commit/ee17afb111086b4c89e7fffc0b381842c7332cb6
+[eed2211]: https://github.com/gavv/reclog/commit/eed2211c127a71e99e7efad1ccb1ac5b8bed5c39
+
 ## [v0.1.4][v0.1.4] - 16 May 2025
 
 * Fix macOS support:
-  * remove gettid() usage ([4161962][4161962])
+  * remove `gettid()` usage ([4161962][4161962])
   * add build-time detection of presence of libc functions ([c8d3c41][c8d3c41])
-  * simulate sigtimedwait() on platforms that don't have it ([5111f18][5111f18])
+  * simulate `sigtimedwait()` on platforms that don't have it ([5111f18][5111f18])
   * fix handling of SIGCHILD on macOS ([0890639][0890639])
 * Handle errors when writing to stdout/stderr ([0de51b2][0de51b2])
 * Set panic mode to "abort"
