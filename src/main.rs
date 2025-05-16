@@ -21,6 +21,7 @@ use crate::writer::InterruptibleWriter;
 use clap::Parser;
 use clap::error::ErrorKind;
 use exec::Command;
+use rustix::io::Errno;
 use rustix::process::Signal;
 use rustix::stdio;
 use rustix::termios::Termios;
@@ -539,11 +540,22 @@ fn stdin_2_pty(
             buf.push(tty_codes.VEOF);
         }
 
-        if let Err(err) = pty_line_writer.write_all(buf.as_bytes()) {
-            terminate!(EXIT_FAILURE; "can't write to pty: {}", err);
+        let mut result = pty_line_writer.write_all(buf.as_bytes());
+        if result.is_ok() {
+            result = pty_line_writer.flush();
         }
-        if let Err(err) = pty_line_writer.flush() {
-            terminate!(EXIT_FAILURE; "can't write to pty: {}", err);
+
+        if let Err(err) = result {
+            match Errno::from_io_error(&err) {
+                Some(Errno::IO | Errno::PIPE) => {
+                    // This happens if child process exits but we haven't received
+                    // SIGCHLD yet. Don't exit, instead finish I/O and wait SIGCHLD.
+                    debug!("got error when writing to pty, exiting io loop: {}", err);
+                    break;
+                }
+                // Unexpected error.
+                _ => terminate!(EXIT_FAILURE; "can't write to pty: {}", err),
+            }
         }
     }
 
@@ -603,21 +615,33 @@ fn pty_2_queue_and_file(
             }
             let size = match pty_line_reader.read_line(&mut buf) {
                 Ok(size) => size,
-                Err(err) => terminate!(EXIT_FAILURE; "can't read from pty: {}", err),
+                Err(err) => {
+                    match Errno::from_io_error(&err) {
+                        Some(Errno::IO) => {
+                            // This happens if child process exits but we haven't received
+                            // SIGCHLD yet. Don't exit, instead finish I/O and wait SIGCHLD.
+                            debug!("got error when reading from pty, exiting io loop: {}", err);
+                            break;
+                        }
+                        // Unexpected error.
+                        _ => terminate!(EXIT_FAILURE; "can't read from pty: {}", err),
+                    }
+                }
             };
             if size == 0 {
                 // EOF, exit loop
-                debug!("got eof from pty, exiting");
+                debug!("got eof from pty, exiting io loop");
                 break;
             }
         }
 
         // Write buffer to output file, synchronously.
         // If stripping is enabled, this writer will also remove ANSI escape codes.
-        if let Err(err) = out_writer.write_all(buf.as_bytes()) {
-            terminate!(EXIT_FAILURE; "can't write output file: {}", err);
+        let mut result = out_writer.write_all(buf.as_bytes());
+        if result.is_ok() {
+            result = out_writer.flush();
         }
-        if let Err(err) = out_writer.flush() {
+        if let Err(err) = result {
             terminate!(EXIT_FAILURE; "can't write output file: {}", err);
         }
 
