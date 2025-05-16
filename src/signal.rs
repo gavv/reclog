@@ -11,21 +11,21 @@ use std::time::Duration;
 /// in the end of graceful termination or pause.
 const EVENT_SIGNALS: [Signal; 10] = [
     // graceful termination
-    Signal::TERM,
-    Signal::INT,
-    Signal::HUP,
+    Signal::TERM, // send by user
+    Signal::INT,  // sent on ^C
     // emergency termination
-    Signal::QUIT,
+    Signal::HUP,  // sent when reclog's tty is closed
+    Signal::QUIT, // sent on ^\
     // stop
-    Signal::TSTP,
-    Signal::TTIN,
-    Signal::TTOU,
+    Signal::TSTP, // sent on ^Z
+    Signal::TTIN, // sent on read attempt after ^Z
+    Signal::TTOU, // sent on write attempt after ^Z
     // continue
-    Signal::CONT,
-    // child exited/stopped/resumed
-    Signal::CHILD,
+    Signal::CONT, // sent on `fg`
+    // child event
+    Signal::CHILD, // sent when child exits/pauses/resumes
     // tty resize
-    Signal::WINCH,
+    Signal::WINCH, // sent when tty is resized
 ];
 
 /// Signals groupped into event categories.
@@ -44,8 +44,8 @@ pub enum SignalEvent {
 /// Categorize signals into higher-level event types.
 fn to_event(sig: Signal) -> SignalEvent {
     match sig {
-        Signal::TERM | Signal::INT | Signal::HUP => SignalEvent::Interrupt(sig),
-        Signal::QUIT => SignalEvent::Quit(sig),
+        Signal::INT | Signal::TERM => SignalEvent::Interrupt(sig),
+        Signal::QUIT | Signal::HUP => SignalEvent::Quit(sig),
         Signal::TSTP | Signal::TTIN | Signal::TTOU => SignalEvent::Stop(sig),
         Signal::CONT => SignalEvent::Continue(sig),
         Signal::CHILD => SignalEvent::Child(sig),
