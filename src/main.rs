@@ -89,8 +89,9 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     silent: bool,
 
-    /// After EOF from command, wait the specified timeout and then quit (milliseconds).
-    #[arg(short, long, default_value_t = 10, value_name = "MILLISECONDS")]
+    /// How long to wait for buffered data after getting EOF. Also how long to wait
+    /// for child to exit voluntarily until killing it forcibly.
+    #[arg(short, long, default_value_t = 15, value_name = "MILLISECONDS")]
     quit: u64,
 
     /// When stdout is slower than command output, buffer at max the specified number
