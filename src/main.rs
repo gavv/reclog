@@ -25,11 +25,12 @@ use rustix::process::Signal;
 use rustix::stdio;
 use rustix::termios::Termios;
 use std::fs::OpenOptions;
+use std::hint;
 use std::io::{self, BufRead, BufReader, BufWriter, Stdin, Stdout, Write};
 use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -144,7 +145,7 @@ fn parse_args() -> Args {
             }
 
             if args.debug {
-                DEBUG.store(true, Ordering::SeqCst);
+                DEBUG.store(1, Ordering::SeqCst);
             }
 
             args
@@ -198,12 +199,12 @@ fn choose_output(args: &Args) -> String {
 }
 
 /// Enable debug logs.
-static DEBUG: AtomicBool = AtomicBool::new(false);
+static DEBUG: AtomicI32 = AtomicI32::new(0);
 
 /// Print message to stderr if debug logs are enabled.
 macro_rules! debug {
     ($fmt:expr $(,$args:expr)*) => ({
-        if DEBUG.load(Ordering::Relaxed) {
+        if DEBUG.load(Ordering::Relaxed) != 0 {
             let msg = format!(concat!("reclog: {}: ", $fmt, "\n"),
                 thread::current().name().unwrap_or("unnamed"),
                               $($args),*);
@@ -212,25 +213,46 @@ macro_rules! debug {
     });
 }
 
+/// Concurrent termination guard.
+static TERMINATE: AtomicI32 = AtomicI32::new(0);
+
 /// Print message to stderr, perform cleanup, and exit with given code.
 /// Error message is optional.
 /// Takes care of global cleanup.
 macro_rules! terminate {
     ($code:expr) => {{
-        before_exit();
-        process::exit($code);
+        if (TERMINATE.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok()) {
+            before_exit();
+            process::exit($code);
+        } else {
+            loop {
+                hint::spin_loop();
+            }
+        }
     }};
     ($code:expr; $fmt:expr) => ({
-        let msg = format!(concat!("reclog: ", $fmt, "\n"));
-        _ = shim::write_all(std::io::stderr(), msg.as_bytes());
-        before_exit();
-        process::exit($code);
+        if (TERMINATE.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok()) {
+            let msg = format!(concat!("reclog: ", $fmt, "\n"));
+            _ = shim::write_all(std::io::stderr(), msg.as_bytes());
+            before_exit();
+            process::exit($code);
+        } else {
+            loop {
+                hint::spin_loop();
+            }
+        }
     });
     ($code:expr; $fmt:expr, $($args:expr),+) => ({
-        let msg = format!(concat!("reclog: ", $fmt, "\n"), $($args),+);
-        _ = shim::write_all(std::io::stderr(), msg.as_bytes());
-        before_exit();
-        process::exit($code);
+        if (TERMINATE.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok()) {
+            let msg = format!(concat!("reclog: ", $fmt, "\n"), $($args),+);
+            _ = shim::write_all(std::io::stderr(), msg.as_bytes());
+            before_exit();
+            process::exit($code);
+        } else {
+            loop {
+                hint::spin_loop();
+            }
+        }
     });
 }
 
