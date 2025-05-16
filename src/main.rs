@@ -616,12 +616,11 @@ fn initiate_shutdown(
     stdin_reader: Arc<InterruptibleReader<Stdin>>,
     pty_reader: Arc<InterruptibleReader<OwnedFd>>,
     pty_writer: Arc<InterruptibleWriter<OwnedFd>>,
-    buf_queue: Arc<BufferQueue>,
     timeout: Duration,
 ) {
     // Set timeout for reading from child. After there is no data during timeout,
     // pty_2_queue_and_file() gets EOF and exits. Timeout allows to be sure we've
-    // read all pending data buferred in the pty.
+    // read all pending data buffered in the pty.
     debug!("setting pty reader timeout to {:?}", timeout);
     if let Err(err) = pty_reader.set_timeout(timeout) {
         terminate!(EXIT_FAILURE; "can't set pty read timeout: {}", err);
@@ -638,11 +637,6 @@ fn initiate_shutdown(
     if let Err(err) = stdin_reader.close() {
         terminate!(EXIT_FAILURE; "can't close stdin: {}", err);
     }
-
-    // Tell pty_2_stdout() to finish.
-    // It will process all pending buffers, then see that queue is closed and exit.
-    debug!("closing buffer queue");
-    buf_queue.close();
 }
 
 /// Get child process exit code and exit with same code.
@@ -812,7 +806,6 @@ fn main() {
         let pty_reader = Arc::clone(&pty_reader);
         let pty_writer = Arc::clone(&pty_writer);
         let stdin_reader = Arc::clone(&stdin_reader);
-        let buf_queue = Arc::clone(&buf_queue);
         let timeout = Duration::from_millis(args.quit);
 
         debug!("spawning control thread");
@@ -822,7 +815,7 @@ fn main() {
                 // Process signals until child exits or graceful termination is requested.
                 let pending_interrupt = process_signals(pty_proc, timeout);
                 // Proceed graceful termination.
-                initiate_shutdown(stdin_reader, pty_reader, pty_writer, buf_queue, timeout);
+                initiate_shutdown(stdin_reader, pty_reader, pty_writer, timeout);
 
                 pending_interrupt
             })
@@ -871,6 +864,11 @@ fn main() {
         &buf_pool,
         &mut formatter,
     );
+
+    // Tell pty_2_stdout() to finish.
+    // The thread will process pending buffers, then see that queue is closed and exit.
+    debug!("closing buffer queue");
+    buf_queue.close();
 
     // Wait until child process exits or graceful termination is requested.
     debug!("waiting for process_signals_thread");

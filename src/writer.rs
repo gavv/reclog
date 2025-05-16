@@ -102,7 +102,7 @@ impl<Fd: AsFd> InterruptibleWriter<Fd> {
             if data_fd.mask != 0 {
                 // file is writeable
                 match shim::write(&self.fd, buf) {
-                    Ok(0) => continue,
+                    Ok(0) => continue, // someone else filled tty/pty
                     Ok(n) => return Ok(n),
                     Err(Errno::AGAIN) => continue,
                     Err(err) => return Err(Error::new(err.kind(), err)),
