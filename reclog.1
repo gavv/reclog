@@ -69,7 +69,7 @@ Output file path.
 If omitted, output path is generated automatically based on the command
 basename (unless \f[B]\-\-null\f[R] is given).
 E.g.
-for \f[B]\[ga]reclog ls \-l\[aq]\f[R], the output file is
+for \f[I]\[ga]reclog ls \-l\[aq]\f[R], the output file is
 \f[I]ls.log\f[R].
 .PP
 Unless \f[B]\-\-force\f[R] or \f[B]\-\-append\f[R] option is given,
@@ -125,22 +125,25 @@ implementation of Paul Williams\[aq] ANSI parser state machine
 Don\[aq]t print anything to stdout.
 .RS
 .PP
-Has same effect as \f[B]\[ga]reclog ...
+Has same effect as \f[I]\[ga]reclog ...
 > /dev/null\[aq]\f[R].
 The output is still printed to file, unless \f[B]\-\-null\f[R] is
 specified.
 .RE
 .TP
 \f[B]\-q, \-\-quit\f[R] \f[I]MILLISECONDS\f[R]
-After EOF from command, wait the specified timeout (in milliseconds) and
-then quit.
-.RS
-.PP
+How long to wait for buffered data after getting EOF.
 When child process exits, reclog continues reading pending output from
 the pty until there is no data during the specified timeout.
-This timeout can be very short, but should not be zero.
-.PP
 This allows to reliably fetch all buffered data before exiting.
+.RS
+.PP
+Also how long to wait for child to exit voluntarily until killing it
+forcibly.
+When emergency termination signal is received, like SIGQUIT, reclog
+forwards it to the child and waits until it exits or timeout expires.
+Then, if the child is still running, it forcibly kills the child with
+SIGKILL.
 .RE
 .TP
 \f[B]\-b, \-\-buffer\f[R] \f[I]LINES\f[R]
@@ -172,28 +175,81 @@ Print help to stdout and exit.
 .TP
 \f[B]\-V, \-\-version\f[R]
 Print version information to stdout and exit.
+.SH STDIN / STDOUT
+reclog connects its own \f[I]stdin\f[R] with the pty input (from which
+the command reads), and connects its \f[I]stdout\f[R] with the pty
+output (to which the command writes).
+.PP
+Note that \f[I]stdout\f[R] gets interleaved output from command\[aq]s
+stdout and stderr (they both are redirected to the same pty).
+Also note that stdout is rate\-limited, as defined by
+\f[B]\-\-buffer\f[R] option.
+.PP
+reclog reads from stdin and writes to stdout one line at a time, with a
+flush after each line.
+If stdin is a tty, it switches it to the \f[I]canonical mode\f[R].
+.PP
+When reclog reads EOF from stdin, it propagates it to the child by
+sending \f[B]VEOF\f[R] character to the master pty, which triggers EOF
+condition on the slave pty after all pending input is read.
+.PP
+reclog does not exit after getting EOF from stdin or pty.
+It initiates termination only when the child process exits, even if it
+already finished I/O in both directions after getting EOFs.
+.SH SESSION
+The child process gets a separate SID (session ID) and PGID (process
+group ID).
+It becomes both a session leader and process group leader, and its SID
+and PGID are equal to its PID.
+.PP
+The slave pty is set as the controlling tty of the child process.
+.PP
+SID, PGID, and controlling tty are automatically inherited by
+grand\-children (unless they explicitly detach from them).
+During termination, reclog (in cause of graceful termination) or kernel
+(if reclog aborts or crashes) send signals to the whole process group.
+This ensures that grand\-children, if present, are properly cleaned up
+too.
 .SH SIGNALS
 All standard job control and termination signals are propagated to the
-child process group: \f[I]SIGTERM\f[R], \f[I]SIGINT\f[R],
-\f[I]SIGHUP\f[R], \f[I]SIGQUIT\f[R], \f[I]SIGTSTP\f[R],
-\f[I]SIGTTIN\f[R], \f[I]SIGTTOU\f[R], \f[I]SIGCONT\f[R],
-\f[I]SIGWINCH\f[R].
+child PGID: \f[I]SIGTERM\f[R], \f[I]SIGINT\f[R], \f[I]SIGHUP\f[R],
+\f[I]SIGQUIT\f[R], \f[I]SIGTSTP\f[R], \f[I]SIGTTIN\f[R],
+\f[I]SIGTTOU\f[R], \f[I]SIGCONT\f[R], \f[I]SIGWINCH\f[R].
+.PP
+Handled signals can be divided into three categories:
 .IP \[bu] 2
-Graceful termination: Hit \f[I]\[ha]C\f[R] (or send \f[I]SIGINT\f[R] or
-\f[I]SIGTERM\f[R] or similar signal) to terminate the child process
-gracefully and flush pending logs.
-Hit \f[I]\[ha]C\f[R] second time to forcibly kill the child if it\[aq]s
-stuck.
+Graceful termination: Hit \f[B]\[ha]C\f[R] (or send \f[I]SIGINT\f[R] or
+\f[I]SIGTERM\f[R]) to terminate the child process gracefully and flush
+pending logs.
+Hit \f[B]\[ha]C\f[R] second time to forcibly kill the child (with
+\f[I]SIGKILL\f[R]) if it\[aq]s stuck.
 .IP \[bu] 2
-Emergency termination: Hit \f[I]\[ha]\[rs]\f[R] (or send
-\f[I]SIGQUIT\f[R]) for emergency termination without flushing the logs.
+Emergency termination: Hit \f[B]\[ha]\[rs]\f[R] (or send
+\f[I]SIGQUIT\f[R] or \f[I]SIGHUP\f[R]) for emergency termination without
+flushing the logs.
 The child is given some short time to terminate properly, then is killed
-forcibly.
+forcibly with \f[I]SIGKILL\f[R].
 .IP \[bu] 2
-Pause/resume: Hit \f[I]\[ha]Z\f[R] (or send \f[I]SIGTSTP\f[R]) to pause.
-Hit \f[I]\[ha]Z\f[R] second time to forcibly pause the child if it\[aq]s
-stuck.
-Type \f[I]fg\f[R] to resume.
+Pause/resume: Hit \f[B]\[ha]Z\f[R] (or send \f[I]SIGTSTP\f[R],
+\f[I]SIGTTIN\f[R], or \f[I]SIGTTOU\f[R]) to pause.
+Hit \f[B]\[ha]Z\f[R] second time to forcibly pause the child (with
+\f[I]SIGSTOP\f[R]) if it\[aq]s stuck.
+Then type \f[B]fg\f[R] (or send \f[I]SIGCONT\f[R]) to resume.
+.PP
+When you close the terminal to which reclog is writing/reading (e.g.
+you close the terminal emulator window when reclog is running), kernel
+automatically generates \f[I]SIGHUP\f[R].
+reclog propagates the signal to the child PGID and waits until child
+exits or \f[B]\-q\f[R] timeout expires.
+If the child didn\[aq]t exit, it is killed forcibly with
+\f[I]SIGKILL\f[R].
+.PP
+If reclog crashes or aborts due to unexpected error, it does not attempt
+to perform graceful termination.
+However, once reclog is killed, kernel closes the master pty and sends
+\f[I]SIGHUP\f[R] to processes which use the slave pty.
+Unless child handles \f[I]SIGHUP\f[R] specially or explicitly changes
+controlling tty, it will be killed by this signal.
 .SH EXIT STATUS
 .IP \[bu] 2
 If system error happens (like file can\[aq]t be opened), reclog exits
@@ -211,6 +267,7 @@ status \f[I]N\f[R].
 If the command is killed by signal \f[I]N\f[R], reclog exits with the
 status \f[I]128 + N\f[R].
 .SH CAVEATS
+reclog makes several assumptions about the command it runs:
 .IP \[bu] 2
 The output and input should be textual and line\-oriented, otherwise
 errors are possible.

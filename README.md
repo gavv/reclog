@@ -211,8 +211,9 @@ Options:
   -N, --null                 Don't write --output file at all
   -R, --raw                  Don't strip ANSI escape codes when writing to --output file
   -s, --silent               Don't print anything to stdout
-  -q, --quit <MILLISECONDS>  After EOF from command, wait the specified timeout and then
-                             quit (milliseconds) [default: 10]
+  -q, --quit <MILLISECONDS>  How long to wait for buffered data after getting EOF. Also
+                             how long to wait for child to exit voluntarily until killing
+                             it forcibly [default: 15]
   -b, --buffer <LINES>       When stdout is slower than command output, buffer at max the
                              specified number of lines; doesn't affect --output file
                              [default: 10000]

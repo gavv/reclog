@@ -55,7 +55,7 @@ OPTIONS
 **-o, --output** *PATH*
     Output file path.
 
-    If omitted, output path is generated automatically based on the command basename (unless **--null** is given). E.g. for **`reclog ls -l'**, the output file is *ls.log*.
+    If omitted, output path is generated automatically based on the command basename (unless **--null** is given). E.g. for *`reclog ls -l'*, the output file is *ls.log*.
 
     Unless **--force** or **--append** option is given, output file should not exist, otherwise an error is reported.
 
@@ -86,14 +86,12 @@ OPTIONS
 **-s, --silent**
     Don't print anything to stdout.
 
-    Has same effect as **`reclog ... > /dev/null'**. The output is still printed to file, unless **--null** is specified.
+    Has same effect as *`reclog ... > /dev/null'*. The output is still printed to file, unless **--null** is specified.
 
 **-q, --quit** *MILLISECONDS*
-    After EOF from command, wait the specified timeout (in milliseconds) and then quit.
+    How long to wait for buffered data after getting EOF. When child process exits, reclog continues reading pending output from the pty until there is no data during the specified timeout. This allows to reliably fetch all buffered data before exiting.
 
-    When child process exits, reclog continues reading pending output from the pty until there is no data during the specified timeout. This timeout can be very short, but should not be zero.
-
-    This allows to reliably fetch all buffered data before exiting.
+    Also how long to wait for child to exit voluntarily until killing it forcibly. When emergency termination signal is received, like SIGQUIT, reclog forwards it to the child and waits until it exits or timeout expires. Then, if the child is still running, it forcibly kills the child with SIGKILL.
 
 **-b, --buffer** *LINES*
     When stdout is slower than command output, buffer at max the specified number of lines.
@@ -116,16 +114,44 @@ OPTIONS
 **-V, --version**
     Print version information to stdout and exit.
 
+STDIN / STDOUT
+==============
+
+reclog connects its own *stdin* with the pty input (from which the command reads), and connects its *stdout* with the pty output (to which the command writes).
+
+Note that *stdout* gets interleaved output from command's stdout and stderr (they both are redirected to the same pty). Also note that stdout is rate-limited, as defined by **--buffer** option.
+
+reclog reads from stdin and writes to stdout one line at a time, with a flush after each line. If stdin is a tty, it switches it to the *canonical mode*.
+
+When reclog reads EOF from stdin, it propagates it to the child by sending **VEOF** character to the master pty, which triggers EOF condition on the slave pty after all pending input is read.
+
+reclog does not exit after getting EOF from stdin or pty. It initiates termination only when the child process exits, even if it already finished I/O in both directions after getting EOFs.
+
+SESSION
+=======
+
+The child process gets a separate SID (session ID) and PGID (process group ID). It becomes both a session leader and process group leader, and its SID and PGID are equal to its PID.
+
+The slave pty is set as the controlling tty of the child process.
+
+SID, PGID, and controlling tty are automatically inherited by grand-children (unless they explicitly detach from them). During termination, reclog (in cause of graceful termination) or kernel (if reclog aborts or crashes) send signals to the whole process group. This ensures that grand-children, if present, are properly cleaned up too.
+
 SIGNALS
 =======
 
-All standard job control and termination signals are propagated to the child process group: *SIGTERM*, *SIGINT*, *SIGHUP*, *SIGQUIT*, *SIGTSTP*, *SIGTTIN*, *SIGTTOU*, *SIGCONT*, *SIGWINCH*.
+All standard job control and termination signals are propagated to the child PGID: *SIGTERM*, *SIGINT*, *SIGHUP*, *SIGQUIT*, *SIGTSTP*, *SIGTTIN*, *SIGTTOU*, *SIGCONT*, *SIGWINCH*.
 
-- Graceful termination: Hit *^C* (or send *SIGINT* or *SIGTERM* or similar signal) to terminate the child process gracefully and flush pending logs. Hit *^C* second time to forcibly kill the child if it's stuck.
+Handled signals can be divided into three categories:
 
-- Emergency termination: Hit *^\\* (or send *SIGQUIT*) for emergency termination without flushing the logs. The child is given some short time to terminate properly, then is killed forcibly.
+- Graceful termination: Hit **^C** (or send *SIGINT* or *SIGTERM*) to terminate the child process gracefully and flush pending logs. Hit **^C** second time to forcibly kill the child (with *SIGKILL*) if it's stuck.
 
-- Pause/resume: Hit *^Z* (or send *SIGTSTP*) to pause. Hit *^Z* second time to forcibly pause the child if it's stuck. Type *fg* to resume.
+- Emergency termination: Hit **^\\** (or send *SIGQUIT* or *SIGHUP*) for emergency termination without flushing the logs. The child is given some short time to terminate properly, then is killed forcibly with *SIGKILL*.
+
+- Pause/resume: Hit **^Z** (or send *SIGTSTP*, *SIGTTIN*, or *SIGTTOU*) to pause. Hit **^Z** second time to forcibly pause the child (with *SIGSTOP*) if it's stuck. Then type **fg** (or send *SIGCONT*) to resume.
+
+When you close the terminal to which reclog is writing/reading (e.g. you close the terminal emulator window when reclog is running), kernel automatically generates *SIGHUP*. reclog propagates the signal to the child PGID and waits until child exits or **-q** timeout expires. If the child didn't exit, it is killed forcibly with *SIGKILL*.
+
+If reclog crashes or aborts due to unexpected error, it does not attempt to perform graceful termination. However, once reclog is killed, kernel closes the master pty and sends *SIGHUP* to processes which use the slave pty. Unless child handles *SIGHUP* specially or explicitly changes controlling tty, it will be killed by this signal.
 
 EXIT STATUS
 ===========
@@ -138,6 +164,8 @@ EXIT STATUS
 
 CAVEATS
 =======
+
+reclog makes several assumptions about the command it runs:
 
 - The output and input should be textual and line-oriented, otherwise errors are possible.
 - The command should be a non-interactive program that uses terminal in canonical mode, otherwise data corruption and freezes are possible.
