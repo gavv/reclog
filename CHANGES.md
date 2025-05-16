@@ -7,7 +7,7 @@
 * Fix handling of SIGHUP ([eed2211][eed2211])
 * Set default `-q` timeout to 15ms and update documentation
 * Fix concurrent termination (when error happens in two thread simultaneously)
-* Improve documentaion: stdin/stdout, session, signals
+* Improve documentation: stdin/stdout, session, signals
 
 [v0.1.5]: https://github.com/gavv/reclog/releases/tag/v0.1.5
 
