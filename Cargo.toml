@@ -43,7 +43,7 @@ sysconf = "0.3.4"
 vte = "0.15.0"
 
 [dependencies.clap]
-version = "4.5.30"
+version = "4.5.39"
 default-features = false
 features = ["std", "help", "usage", "error-context", "derive", "wrap_help"]
 
