@@ -30,7 +30,7 @@ redundant_pattern_matching = "allow"
 unnecessary_unwrap = "allow"
 
 [build-dependencies]
-cargo_toml = "0.22.1"
+cargo_toml = "0.22.3"
 hex = "0.4.3"
 sha2 = "0.10.9"
 
