@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.1.6][v0.1.6] - 06 Sep 2025
+
+* Fix build for arm64
+* Fix build for arm32
+* Bump dependencies
+* Fix CI
+
+[v0.1.6]: https://github.com/gavv/reclog/releases/tag/v0.1.6
+
 ## [v0.1.5][v0.1.5] - 16 May 2025
 
 * Fix hang on EOF from stdin ([fc6704d][fc6704d])
