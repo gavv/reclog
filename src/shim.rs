@@ -355,7 +355,7 @@ pub fn sigmask(sig_list: &[Signal], action: SigMask) -> Result<(), Errno> {
 pub fn sigwait(sig_list: &[Signal], timeout: Option<Duration>) -> Result<Option<Signal>, Errno> {
     let mut ts_timeout = timeout.map(|d| libc::timespec {
         tv_sec: d.as_secs() as libc::time_t,
-        tv_nsec: d.subsec_nanos() as i64,
+        tv_nsec: d.subsec_nanos() as _,
     });
 
     let mut ret;
