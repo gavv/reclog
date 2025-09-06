@@ -3,8 +3,8 @@ reclog(1)
 =========
 :Manual section: 1
 :Manual group: User Commands
-:Date: May 2025
-:Footer: reclog 0.1.5
+:Date: September 2025
+:Footer: reclog 0.1.6
 
 NAME
 ====
