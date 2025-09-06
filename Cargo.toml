@@ -23,6 +23,7 @@ panic = "abort"
 dead_code = "allow"
 
 [lints.clippy]
+collapsible_if = "allow"
 comparison_to_empty = "allow"
 nonminimal_bool = "allow"
 redundant_closure = "allow"
