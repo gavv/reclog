@@ -33,7 +33,7 @@ unnecessary_unwrap = "allow"
 [build-dependencies]
 cargo_toml = "0.22.1"
 hex = "0.4.3"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 
 [dependencies]
 exec = "0.3.1"
