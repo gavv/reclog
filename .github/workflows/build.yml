@@ -28,7 +28,7 @@ jobs:
     name: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
